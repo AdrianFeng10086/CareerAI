@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  mcp-boss-zp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mcp-boss-zp
+    ports:
+      - "8000:8000"
+    volumes:
+      # 挂载静态文件目录，持久化二维码图片
+      - ./static:/app/static
+    restart: unless-stopped
+    # 提供足够的内存给 Playwright
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G

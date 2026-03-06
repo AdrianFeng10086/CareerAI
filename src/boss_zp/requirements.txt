@@ -1,0 +1,15 @@
+# FastMCP Framework
+fastmcp>=2.13.0
+
+# HTTP Requests
+requests>=2.31.0
+
+# Cryptography
+pycryptodome>=3.19.0
+
+# Browser Automation
+playwright>=1.40.0
+
+# ASGI Server
+uvicorn>=0.27.0
+starlette>=0.36.0

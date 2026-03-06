@@ -1,0 +1,39 @@
+# Git files
+.git
+.gitignore
+
+# IDE and OS specific
+.idea/
+.vscode/
+.DS_Store
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# Documentation
+*.md
+!README.md
+
+# Static files (will be generated at runtime)
+static/*.png
+
+# Logs
+*.log
+
+# Environment variables
+.env
+
+# Test files
+test_*.py
+
+# Other files
+Fastmcp.md
+boss-zhipin-login-flow.md
+CLAUDE.md
+CLAUDE_CONFIG.md

@@ -1,0 +1,6 @@
+# 职探AI 依赖
+requests>=2.31.0
+pycryptodome>=3.19.0
+Flask>=3.0.0
+Markdown>=3.7
+reportlab>=4.2.0

@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>职探AI | 智能求职分析平台</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/github-markdown-css@5.8.1/github-markdown.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style/style.css') }}">
+</head>
+<body>
+<div class="bg-layer bg-grid"></div>
+<div class="bg-layer bg-glow"></div>
+<div class="bg-layer bg-particles"></div>
+
+<main class="page-wrap">
+    <header class="top-bar">
+        <div class="brand-chip">ZT-AI CORE</div>
+        <div class="status" id="app-status">系统状态检测中...</div>
+    </header>
+
+    <section class="hero">
+        <p class="eyebrow">智能求职作战台</p>
+        <h1 id="typing-title" class="typing-title" data-text="职探AI"></h1>
+        <p class="hero-subtitle">从 Boss 职位数据出发，自动完成搜索、分析与报告生成。</p>
+    </section>
+
+    <section class="module-grid">
+        <article class="module-card" id="card-reports">
+            <h2>查看报告</h2>
+            <p>浏览历史分析报告，追踪市场变化与个人策略。</p>
+            <button class="module-btn" id="open-reports">进入报告中心</button>
+        </article>
+
+        <article class="module-card" id="card-chat">
+            <h2>开始对话</h2>
+            <p>通过自然语言下达任务: 搜索岗位、分析数据、生成报告。</p>
+            <button class="module-btn" id="open-chat">进入对话引擎</button>
+        </article>
+
+        <article class="module-card" id="card-login">
+            <h2>Boss 登录</h2>
+            <p>保存 Cookie / BST，授权系统读取 Boss 直聘职位数据。</p>
+            <button class="module-btn" id="open-login">打开登录面板</button>
+        </article>
+    </section>
+</main>
+
+<section class="panel" id="reports-panel" aria-hidden="true">
+    <div class="panel-header">
+        <h3>历史报告中心</h3>
+        <button class="panel-close" data-close="reports-panel">关闭</button>
+    </div>
+    <div class="panel-body reports-layout">
+        <div class="report-list" id="report-list"></div>
+        <article class="report-viewer" id="report-viewer">请选择左侧报告查看内容。</article>
+    </div>
+</section>
+
+<section class="panel" id="chat-panel" aria-hidden="true">
+    <div class="panel-header">
+        <h3>AI 对话引擎</h3>
+        <button class="panel-close" data-close="chat-panel">关闭</button>
+    </div>
+    <div class="panel-body chat-layout">
+        <div class="task-progress" id="task-progress" hidden>
+            <div class="task-progress-head">
+                <span id="task-progress-stage">任务准备中...</span>
+                <span id="task-progress-pct">0%</span>
+            </div>
+            <div class="task-progress-track">
+                <div class="task-progress-bar" id="task-progress-bar"></div>
+            </div>
+            <div class="task-progress-msg" id="task-progress-msg"></div>
+        </div>
+        <div class="chat-messages" id="chat-messages"></div>
+        <form id="chat-form" class="chat-form">
+            <textarea id="chat-input" rows="3" placeholder="例如: 帮我搜索上海前端工程师3页并分析出报告"></textarea>
+            <button type="submit" class="module-btn">发送并执行</button>
+        </form>
+    </div>
+</section>
+
+<section class="panel" id="login-panel" aria-hidden="true">
+    <div class="panel-header">
+        <h3>Boss 登录</h3>
+        <button class="panel-close" data-close="login-panel">关闭</button>
+    </div>
+    <div class="panel-body login-layout">
+        <form id="login-form" class="login-form">
+            <label for="cookie-input">Cookie</label>
+            <textarea id="cookie-input" rows="5" placeholder="粘贴完整 Cookie"></textarea>
+
+            <label for="bst-input">BST (可选)</label>
+            <input id="bst-input" type="text" placeholder="可选">
+
+            <div class="login-actions">
+                <button type="submit" class="module-btn">保存 Cookie</button>
+                <button type="button" class="ghost-btn" id="mcp-login">MCP 扫码登录</button>
+            </div>
+        </form>
+        <div class="login-hint">
+            保存后对话模块即可直接执行搜索和分析流程。
+        </div>
+    </div>
+</section>
+
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/markdown-it@14.1.0/dist/markdown-it.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
