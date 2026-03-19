@@ -13,20 +13,27 @@ import json
 import importlib
 import os
 import re
+import time
 import threading
 import uuid
+import base64
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List
 
 import requests
-from flask import Flask, jsonify, render_template, request, send_file
+from flask import Flask, jsonify, render_template, request, send_file, Response
+
+from Crypto.Cipher import AES
+from Crypto.Util.Padding import pad
+from Crypto.Random import get_random_bytes
 
 from src.analyzer import JobAnalyzer
 from src.config import Config
 from src.models import CITY_CODES, SearchQuery
 from src.report import ReportGenerator
 from src.scraper import BossZhipinScraper
+from src.boss_zp.cookie_utils import save_cookie_to_config
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -34,6 +41,8 @@ app = Flask(__name__, template_folder="template", static_folder="static")
 
 TASK_LOCK = threading.Lock()
 CHAT_TASKS: Dict[str, Dict[str, Any]] = {}
+MCP_LOGIN_LOCK = threading.Lock()
+MCP_LOGIN_TASKS: Dict[str, Dict[str, Any]] = {}
 
 
 @dataclass
@@ -195,6 +204,13 @@ def _extract_user_profile(message: str) -> Dict[str, Any]:
 
     profile: Dict[str, Any] = {
         "years_of_experience": None,
+        "education_level": "",
+        "target_city": "",
+        "target_role": "",
+        "research_focus": [],
+        "projects": [],
+        "achievements": [],
+        "tech_stack": [],
         "goals": [],
         "strengths": [],
         "concerns": [],
@@ -205,11 +221,49 @@ def _extract_user_profile(message: str) -> Dict[str, Any]:
     if year_match:
         profile["years_of_experience"] = year_match.group(1)
 
+    edu_match = re.search(r"(博士|硕士|研究生|本科|大专|中专|高中|985|211|一本|二本|专升本)", text)
+    if edu_match:
+        profile["education_level"] = edu_match.group(1)
+
+    for city_name in CITY_CODES.keys():
+        if city_name in text:
+            profile["target_city"] = city_name
+            break
+
+    role_match = re.search(
+        r"(?:找|应聘|求职|投递|冲|面向)\s*(?:一个|一份|岗位|职位)?\s*([\u4e00-\u9fa5A-Za-z0-9+\-#/]{2,30})\s*(?:岗|岗位|职位)?",
+        text,
+    )
+    if role_match:
+        profile["target_role"] = role_match.group(1).strip(" ，,。；;：:")
+
+    focus_patterns = [
+        r"研究方向[为是:]?\s*([^。；;\n]{4,80})",
+        r"主要研究方向[为是:]?\s*([^。；;\n]{4,80})",
+        r"长期关注\s*([^。；;\n]{4,80})",
+    ]
+    for pattern in focus_patterns:
+        for m in re.findall(pattern, text):
+            val = str(m).strip(" ：:，,。；;")
+            if val and val not in profile["research_focus"] and len(profile["research_focus"]) < 5:
+                profile["research_focus"].append(val)
+
     sentences = [x.strip() for x in re.split(r"[。！？!\?；;\n]+", text) if x.strip()]
     goal_markers = ("想", "希望", "目标", "打算", "计划", "转行", "冲", "拿到")
-    strength_markers = ("擅长", "熟悉", "做过", "负责", "经验", "会", "掌握")
+    strength_markers = (
+        "擅长", "熟悉", "做过", "负责", "经验", "会", "掌握", "具备", "能够", "实现",
+        "构建", "开发", "优化", "落地", "实践", "原型", "开源", "RAG", "Agent",
+    )
     concern_markers = ("担心", "不会", "薄弱", "缺乏", "没做过", "焦虑", "压力", "卡")
-    personal_markers = ("我", "自己", "目前", "之前", "毕业", "经历", "项目", "工作")
+    personal_markers = (
+        "我", "自己", "目前", "之前", "毕业", "经历", "项目", "工作", "研究方向", "关注", "获奖", "竞赛",
+    )
+    project_markers = ("项目", "系统", "平台", "原型", "问诊", "客服", "uni-app", "vue", "github")
+    achievement_markers = ("获奖", "一等奖", "二等奖", "三等奖", "挑战杯", "泰迪杯", "竞赛", "开源")
+    tech_terms = [
+        "RAG", "AI Agent", "Agent", "LLM", "大语言模型", "Prompt", "向量检索", "知识库", "Python",
+        "Vue2", "Vue", "uni-app", "Multi-Agent", "GitHub",
+    ]
 
     def _append_unique(key: str, sentence: str, limit: int) -> None:
         if sentence not in profile[key] and len(profile[key]) < limit:
@@ -217,13 +271,28 @@ def _extract_user_profile(message: str) -> Dict[str, Any]:
 
     for sent in sentences:
         if any(k in sent for k in personal_markers):
-            _append_unique("personal_notes", sent[:120], 6)
+            _append_unique("personal_notes", sent[:260], 8)
         if any(k in sent for k in goal_markers):
-            _append_unique("goals", sent[:100], 4)
+            _append_unique("goals", sent[:220], 6)
         if any(k in sent for k in strength_markers):
-            _append_unique("strengths", sent[:100], 4)
+            _append_unique("strengths", sent[:280], 8)
         if any(k in sent for k in concern_markers):
-            _append_unique("concerns", sent[:100], 4)
+            _append_unique("concerns", sent[:220], 6)
+        if any(k.lower() in sent.lower() for k in project_markers):
+            _append_unique("projects", sent[:260], 8)
+        if any(k in sent for k in achievement_markers):
+            _append_unique("achievements", sent[:220], 8)
+
+    lower_text = text.lower()
+    for term in tech_terms:
+        if term.lower() in lower_text and term not in profile["tech_stack"]:
+            profile["tech_stack"].append(term)
+    profile["tech_stack"] = profile["tech_stack"][:15]
+
+    if not any(v for v in profile.values() if v):
+        # 极端情况下兜底，避免长文本被判空。
+        fallback_notes = [x.strip() for x in re.split(r"[\n]+", text) if x.strip()][:3]
+        profile["personal_notes"] = [x[:120] for x in fallback_notes]
 
     # 剔除空项，减小在模型提示中的噪声。
     compact_profile = {k: v for k, v in profile.items() if v}
@@ -235,10 +304,22 @@ def _profile_summary_text(profile: Dict[str, Any]) -> str:
         return "未检测到可用个人经历信息。"
 
     parts = []
+    if profile.get("education_level"):
+        parts.append(f"学历/背景: {profile['education_level']}")
     if profile.get("years_of_experience"):
         parts.append(f"经验约{profile['years_of_experience']}年")
+    if profile.get("target_city"):
+        parts.append(f"期望城市: {profile['target_city']}")
+    if profile.get("target_role"):
+        parts.append(f"方向: {profile['target_role']}")
     if profile.get("goals"):
         parts.append(f"目标: {profile['goals'][0]}")
+    if profile.get("research_focus"):
+        parts.append(f"研究重点: {profile['research_focus'][0]}")
+    if profile.get("projects"):
+        parts.append(f"项目经历: {len(profile['projects'])}条")
+    if profile.get("tech_stack"):
+        parts.append(f"技术栈: {', '.join(profile['tech_stack'][:3])}")
     if profile.get("concerns"):
         parts.append(f"顾虑: {profile['concerns'][0]}")
     return " | ".join(parts) if parts else "已提取到个人经历信息。"
@@ -256,6 +337,8 @@ def _new_task_record(message: str) -> str:
             "message": "任务已创建，准备开始...",
             "user_message": message,
             "result": None,
+            "events": [],
+            "next_event_id": 1,
         }
     return task_id
 
@@ -291,13 +374,261 @@ def _update_task(
 def _get_task(task_id: str) -> Dict[str, Any] | None:
     with TASK_LOCK:
         task = CHAT_TASKS.get(task_id)
-        return dict(task) if task else None
+        if not task:
+            return None
+        snapshot = dict(task)
+        snapshot["events"] = list(task.get("events", []))
+        return snapshot
 
 
-def _run_pipeline(message: str, progress_cb: Callable[[int, str, str], None] | None = None) -> Dict[str, Any]:
+def _new_mcp_login_task() -> str:
+    task_id = uuid.uuid4().hex
+    with MCP_LOGIN_LOCK:
+        MCP_LOGIN_TASKS[task_id] = {
+            "id": task_id,
+            "status": "running",
+            "ok": None,
+            "step": "starting",
+            "message": "正在初始化 MCP 登录流程...",
+            "qr_id": "",
+            "qr_ready": False,
+            "qr_bytes": b"",
+            "started_at": int(time.time()),
+            "updated_at": int(time.time()),
+        }
+    return task_id
+
+
+def _update_mcp_login_task(task_id: str, **kwargs: Any) -> None:
+    with MCP_LOGIN_LOCK:
+        task = MCP_LOGIN_TASKS.get(task_id)
+        if not task:
+            return
+        for k, v in kwargs.items():
+            task[k] = v
+        task["updated_at"] = int(time.time())
+
+
+def _get_mcp_login_task(task_id: str) -> Dict[str, Any] | None:
+    with MCP_LOGIN_LOCK:
+        task = MCP_LOGIN_TASKS.get(task_id)
+        if not task:
+            return None
+        snapshot = dict(task)
+        snapshot.pop("qr_bytes", None)
+        return snapshot
+
+
+def _get_mcp_qr_bytes(task_id: str) -> bytes:
+    with MCP_LOGIN_LOCK:
+        task = MCP_LOGIN_TASKS.get(task_id) or {}
+        return task.get("qr_bytes", b"")
+
+
+def _generate_boss_fp() -> str:
+    i_str = "8048b8676fb7d3d8952276e6e98e0bde.f2dc7a63c4b0fbfa4b51a07e2710cf83.fef7e750fc3a1e6327e8a880915aee9c.ae00f848beb1aa591d71d5a80dd3bd95"
+    e_b64 = "clRwXUJBK1VKK0k0IWFbbQ=="
+
+    key_bytes = base64.b64decode(e_b64)
+    plaintext_bytes = i_str.encode("utf-8")
+    iv_bytes = get_random_bytes(16)
+    cipher = AES.new(key_bytes, AES.MODE_CBC, iv_bytes)
+    padded_plaintext = pad(plaintext_bytes, AES.block_size)
+    ciphertext_bytes = cipher.encrypt(padded_plaintext)
+    result_bytes = iv_bytes + ciphertext_bytes
+    return base64.b64encode(result_bytes).decode("utf-8")
+
+
+def _parse_set_cookie(set_cookie_headers: str) -> tuple[str, str]:
+    cookie_str = ""
+    bst_value = ""
+    if not set_cookie_headers:
+        return cookie_str, bst_value
+
+    cookies: Dict[str, str] = {}
+    cookie_parts = set_cookie_headers.split(",")
+    for part in cookie_parts:
+        if "=" not in part:
+            continue
+        name_value = part.strip().split(";", 1)[0].strip()
+        if "=" not in name_value:
+            continue
+        name, value = name_value.split("=", 1)
+        cookies[name.strip()] = value.strip()
+
+    cookie_str = "; ".join([f"{k}={v}" for k, v in cookies.items()])
+    if "bst" in cookies:
+        bst_value = cookies["bst"]
+    return cookie_str, bst_value
+
+
+def _run_mcp_login_task(task_id: str) -> None:
+    session = requests.Session()
+    session.headers.update(
+        {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Referer": "https://www.zhipin.com/web/user/?ka=header-login",
+            "Origin": "https://www.zhipin.com",
+        }
+    )
+
+    try:
+        _update_mcp_login_task(task_id, step="qr_preparing", message="正在生成登录二维码...")
+
+        randkey_url = "https://www.zhipin.com/wapi/zppassport/captcha/randkey"
+        rand_resp = session.post(randkey_url, timeout=15)
+        rand_resp.raise_for_status()
+        qr_id = rand_resp.json()["zpData"]["qrId"]
+
+        qr_url = f"https://www.zhipin.com/wapi/zpweixin/qrcode/getqrcode?content={qr_id}"
+        qr_resp = session.get(qr_url, timeout=15)
+        qr_resp.raise_for_status()
+
+        _update_mcp_login_task(
+            task_id,
+            step="qr_generated",
+            message="二维码已生成，请使用 Boss 直聘 APP 扫码。",
+            qr_id=qr_id,
+            qr_ready=True,
+            qr_bytes=qr_resp.content,
+        )
+
+        scan_url = f"https://www.zhipin.com/wapi/zppassport/qrcode/scan?uuid={qr_id}"
+        scan_deadline = time.time() + 240
+        scanned = False
+        while time.time() < scan_deadline:
+            try:
+                scan_resp = session.get(scan_url, timeout=35)
+                if scan_resp.status_code == 200 and scan_resp.json().get("scaned"):
+                    scanned = True
+                    _update_mcp_login_task(
+                        task_id,
+                        step="scanned",
+                        message="已检测到扫码，正在等待手机端确认登录...",
+                    )
+                    break
+            except requests.exceptions.ReadTimeout:
+                pass
+            except Exception:
+                pass
+            time.sleep(1)
+
+        if not scanned:
+            _update_mcp_login_task(
+                task_id,
+                status="failed",
+                ok=False,
+                step="failed",
+                message="等待扫码超时，请重新发起 MCP 登录。",
+            )
+            return
+
+        confirm_url = f"https://www.zhipin.com/wapi/zppassport/qrcode/scanLogin?qrId={qr_id}&status=1"
+        confirm_deadline = time.time() + 240
+        confirmed = False
+        while time.time() < confirm_deadline:
+            try:
+                confirm_resp = session.get(confirm_url, timeout=35)
+                if confirm_resp.status_code == 200:
+                    confirmed = True
+                    _update_mcp_login_task(
+                        task_id,
+                        step="confirmed",
+                        message="手机端已确认，正在获取登录 Cookie...",
+                    )
+                    break
+            except requests.exceptions.ReadTimeout:
+                pass
+            except Exception:
+                pass
+            time.sleep(1)
+
+        if not confirmed:
+            _update_mcp_login_task(
+                task_id,
+                status="failed",
+                ok=False,
+                step="failed",
+                message="等待手机确认超时，请重新发起 MCP 登录。",
+            )
+            return
+
+        _update_mcp_login_task(task_id, step="cookie", message="正在交换登录凭证...")
+        fp = _generate_boss_fp()
+        dispatcher_url = (
+            f"https://www.zhipin.com/wapi/zppassport/qrcode/dispatcher?qrId={qr_id}&pk=header-login&fp={fp}"
+        )
+        cookie_resp = session.get(dispatcher_url, allow_redirects=False, timeout=20)
+        cookie_str, bst_value = _parse_set_cookie(cookie_resp.headers.get("Set-Cookie", ""))
+
+        if not cookie_str:
+            _update_mcp_login_task(
+                task_id,
+                status="failed",
+                ok=False,
+                step="failed",
+                message="Cookie 获取失败，请重新发起登录。",
+            )
+            return
+
+        _update_mcp_login_task(task_id, step="saving", message="已获取 Cookie，正在写入配置...")
+        save_ok = save_cookie_to_config(cookie_str, bst_value)
+        if not save_ok:
+            _update_mcp_login_task(
+                task_id,
+                status="failed",
+                ok=False,
+                step="failed",
+                message="Cookie 已获取但写入配置失败，请查看日志。",
+            )
+            return
+
+        _update_mcp_login_task(
+            task_id,
+            status="done",
+            ok=True,
+            step="logged_in",
+            message="登录成功，Cookie 已保存。",
+        )
+    except Exception as e:
+        _update_mcp_login_task(
+            task_id,
+            status="failed",
+            ok=False,
+            step="failed",
+            message=f"MCP 登录异常: {e}",
+        )
+
+
+def _add_task_event(task_id: str, text: str, kind: str = "bot") -> None:
+    text = str(text or "").strip()
+    if not text:
+        return
+    with TASK_LOCK:
+        task = CHAT_TASKS.get(task_id)
+        if not task:
+            return
+        event_id = int(task.get("next_event_id", 1))
+        events = task.setdefault("events", [])
+        events.append({"id": event_id, "text": text, "kind": kind})
+        task["next_event_id"] = event_id + 1
+        # 控制内存，避免长任务无限增长。
+        if len(events) > 120:
+            del events[: len(events) - 120]
+
+
+def _run_pipeline(
+    message: str,
+    progress_cb: Callable[[int, str, str], None] | None = None,
+    event_cb: Callable[[str, str], None] | None = None,
+) -> Dict[str, Any]:
     def step(pct: int, stage: str, text: str) -> None:
         if progress_cb:
             progress_cb(pct, stage, text)
+
+    def emit(text: str, kind: str = "bot") -> None:
+        if event_cb:
+            event_cb(text, kind)
 
     config = Config.load()
     if not config.cookie:
@@ -312,6 +643,9 @@ def _run_pipeline(message: str, progress_cb: Callable[[int, str, str], None] | N
         step(3, "rule.intent.start", "未配置 AI，正在使用规则解析意图...")
 
     intent = _parse_intent(config, message)
+    emit(
+        f"执行参数: action={intent.action}, keyword={intent.keyword or '(空)'}, city={intent.city}, pages={intent.pages}"
+    )
 
     if config.ai_api_key:
         step(8, "ai.intent.done", "AI 意图解析完成，正在提取你的个人经历信息...")
@@ -319,6 +653,7 @@ def _run_pipeline(message: str, progress_cb: Callable[[int, str, str], None] | N
         step(8, "rule.intent.done", "规则意图解析完成，正在提取你的个人经历信息...")
     user_profile = _extract_user_profile(message)
     step(12, "profile", f"已提取个人信息: {_profile_summary_text(user_profile)}")
+    emit(f"个性化信息识别: {_profile_summary_text(user_profile)}")
 
     scraper = BossZhipinScraper(config)
     analyzer = JobAnalyzer(config)
@@ -335,6 +670,7 @@ def _run_pipeline(message: str, progress_cb: Callable[[int, str, str], None] | N
             "scraping.page",
             f"正在抓取职位数据: {done_pages}/{total_pages} 页, 已获取 {job_count} 条。网络波动时会稍慢，这是正常现象。",
         )
+        emit(f"抓取进度: {done_pages}/{total_pages} 页，已获取 {job_count} 条职位。")
 
     if intent.action == "recommend":
         jobs = scraper.get_recommend_jobs(max_pages=intent.pages, progress_callback=on_scrape_progress)
@@ -349,14 +685,29 @@ def _run_pipeline(message: str, progress_cb: Callable[[int, str, str], None] | N
         jobs = scraper.search_jobs(query, progress_callback=on_scrape_progress)
         query_name = intent.keyword
 
+    scrape_meta = scraper.get_last_run_meta()
+    risk_detected = bool(scrape_meta.get("risk_blocked") or scrape_meta.get("entered_browser_mode"))
+
     if not jobs:
+        fail_message = "没有抓取到有效职位数据。请检查关键词、城市或登录状态后重试。"
+        if risk_detected:
+            fail_message = "没有抓取到有效职位数据，且检测到疑似被风控。系统将进入第二轮重试。"
         return {
             "ok": False,
-            "message": "没有抓取到有效职位数据。请检查关键词、城市或登录状态后重试。",
+            "message": fail_message,
+            "risk_control_detected": risk_detected,
+            "should_retry": risk_detected,
+            "scrape_meta": scrape_meta,
         }
+
+    if risk_detected:
+        emit(
+            "提示: 已检测到被风控，浏览器模式可能跳转空白页。系统将使用第一轮已抓取的数据继续后续分析，不再进入第二轮。"
+        )
 
     step(58, "save-data", "抓取完成，正在保存原始数据...")
     data_path = scraper.save_jobs(jobs)
+    emit(f"原始数据已保存: {os.path.basename(data_path)}")
 
     def on_analyze_progress(local_pct: int, stage: str, msg: str) -> None:
         mapped = 60 + int(max(0, min(100, local_pct)) * 0.22)
@@ -386,6 +737,7 @@ def _run_pipeline(message: str, progress_cb: Callable[[int, str, str], None] | N
         f"任务完成: 已执行{intent.action}流程, 共抓取 {len(jobs)} 条职位, "
         f"并生成报告 `{latest_report}`。"
     )
+    emit(f"新报告已生成: {latest_report}，可在报告中心查看。")
 
     return {
         "ok": True,
@@ -397,6 +749,8 @@ def _run_pipeline(message: str, progress_cb: Callable[[int, str, str], None] | N
             "pages": intent.pages,
         },
         "jobs_count": len(jobs),
+        "risk_control_detected": risk_detected,
+        "scrape_meta": scrape_meta,
         "user_profile": user_profile,
         "user_profile_summary": _profile_summary_text(user_profile),
         "data_file": os.path.basename(data_path),
@@ -408,8 +762,33 @@ def _run_pipeline_task(task_id: str, message: str) -> None:
     def progress_cb(pct: int, stage: str, text: str) -> None:
         _update_task(task_id, progress=pct, stage=stage, message=text)
 
+    def event_cb(text: str, kind: str = "bot") -> None:
+        _add_task_event(task_id, text, kind=kind)
+
     try:
-        result = _run_pipeline(message, progress_cb=progress_cb)
+        result = _run_pipeline(message, progress_cb=progress_cb, event_cb=event_cb)
+
+        should_retry = not result.get("ok") and bool(result.get("should_retry"))
+        if should_retry:
+            warning = "提示: 检测到首次抓取疑似触发风控，系统将自动按原始输入完整重跑一次流程，因此整体耗时会更长。"
+            _add_task_event(task_id, warning, kind="bot")
+            _update_task(
+                task_id,
+                progress=5,
+                stage="retry.wind-control",
+                message="检测到首次抓取疑似触发风控，系统将按你的原始输入完整重跑一次流程。由于风控原因，本次总耗时会更长，请耐心等待。",
+            )
+            retry_result = _run_pipeline(message, progress_cb=progress_cb, event_cb=event_cb)
+            if retry_result.get("ok"):
+                retry_result["retried_due_to_wind_control"] = True
+                result = retry_result
+            else:
+                retry_result["retried_due_to_wind_control"] = True
+                retry_result["message"] = (
+                    f"{retry_result.get('message', '任务失败')}（已因风控自动重试一次完整流程）"
+                )
+                result = retry_result
+
         if result.get("ok"):
             _update_task(
                 task_id,
@@ -430,6 +809,7 @@ def _run_pipeline_task(task_id: str, message: str) -> None:
                 result=result,
             )
     except Exception as e:
+        _add_task_event(task_id, f"执行异常: {e}", kind="error")
         _update_task(
             task_id,
             stage="failed",
@@ -560,6 +940,70 @@ def api_boss_login_mcp():
     if success:
         return jsonify({"ok": True, "message": "MCP 登录成功，Cookie 已更新"})
     return jsonify({"ok": False, "message": "MCP 登录失败，请查看终端日志"}), 500
+
+
+@app.post("/api/boss/mcp-login/start")
+def api_boss_mcp_login_start():
+    cfg = Config.load()
+    if cfg.cookie:
+        return jsonify({
+            "ok": True,
+            "already_logged_in": True,
+            "message": "您已登录，进入首页。",
+        })
+
+    task_id = _new_mcp_login_task()
+    worker = threading.Thread(target=_run_mcp_login_task, args=(task_id,), daemon=True)
+    worker.start()
+
+    return jsonify(
+        {
+            "ok": True,
+            "already_logged_in": False,
+            "task_id": task_id,
+            "qr_url": f"/api/boss/mcp-login/qr/{task_id}",
+            "message": "MCP 登录已启动",
+        }
+    )
+
+
+@app.get("/api/boss/mcp-login/task/<task_id>")
+def api_boss_mcp_login_task(task_id: str):
+    task = _get_mcp_login_task(task_id)
+    if not task:
+        return jsonify({"ok": False, "message": "登录任务不存在"}), 404
+    return jsonify({"ok": True, "task": task})
+
+
+@app.get("/api/boss/mcp-login/qr/<task_id>")
+def api_boss_mcp_login_qr(task_id: str):
+    task = _get_mcp_login_task(task_id)
+    if not task:
+        return Response("登录任务不存在", status=404, mimetype="text/plain; charset=utf-8")
+
+    qr_bytes = _get_mcp_qr_bytes(task_id)
+    if qr_bytes:
+        return Response(qr_bytes, mimetype="image/png")
+
+    html = """
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="refresh" content="1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MCP 登录二维码</title>
+  <style>
+    body { margin: 0; background: #091a2b; color: #d7f2ff; font-family: sans-serif; display: grid; place-items: center; height: 100vh; }
+    .box { text-align: center; padding: 16px 20px; border: 1px solid #24506f; border-radius: 12px; }
+  </style>
+</head>
+<body>
+  <div class="box">二维码生成中，请稍候...</div>
+</body>
+</html>
+"""
+    return Response(html, mimetype="text/html; charset=utf-8")
 
 
 if __name__ == "__main__":

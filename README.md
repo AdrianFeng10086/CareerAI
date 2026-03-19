@@ -1,163 +1,253 @@
-# 职探AI
+<h1 align="center">CareerAI</h1>
 
-基于 Boss 直聘数据的职位洞察与职业建议工具，支持：
-- 职位搜索与推荐抓取
-- 薪资/技能/地区/学历等结构化分析
-- AI 深度解读与个性化建议
-- 多格式报告输出（Markdown / HTML / PDF）
-- Web 对话式一键分析流程
+<p align="center">
+  <strong>把 Boss 职位抓取、岗位分析、个性化建议和报告生成整合成一次对话流程</strong>
+</p>
 
-## 功能亮点
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.10+" />
+  <img src="https://img.shields.io/badge/Flask-Web_App-000000?style=for-the-badge&logo=flask&logoColor=white" alt="Flask" />
+  <img src="https://img.shields.io/badge/Report-Markdown%20%7C%20HTML%20%7C%20PDF-2E8B57?style=for-the-badge" alt="Report" />
+  <img src="https://img.shields.io/badge/Status-Active-00A86B?style=for-the-badge" alt="Status" />
+</p>
 
-- 职位数据抓取
-  - 支持按关键词和城市搜索职位
-  - 支持推荐职位抓取
-- 智能分析
-  - 薪资区间、年薪估算、技能热度、地区分布、学历与经验要求统计
-  - 可接入 OpenAI 兼容接口（如 DeepSeek）进行深度分析
-- 报告输出
-  - 命令行摘要
-  - Markdown 报告
-  - HTML 可视化报告
-  - PDF 报告
-- Web 端能力
-  - 报告列表与在线查看
-  - 聊天触发“搜索 -> 分析 -> 出报告”任务流
-  - 支持保存 Boss Cookie、调用 MCP 登录
+<p align="center">
+  <a href="#快速开始">快速开始</a> ·
+  <a href="#核心能力">核心能力</a> ·
+  <a href="#web-流程">Web 流程</a> ·
+  <a href="#cli-命令">CLI 命令</a> ·
+  <a href="#常见问题-faq">常见问题</a>
+</p>
 
-## 项目结构
+---
 
-```text
-职探AI/
-├── web_app.py                 # Flask Web 入口
-├── config.json                # 项目配置（含 AI 与 Cookie）
-├── requirements.txt           # 依赖列表
-├── data/                      # 抓取原始数据输出目录
-├── output/                    # 报告输出目录
-├── src/
-│   ├── main.py                # CLI 入口
-│   ├── scraper.py             # Boss 职位抓取
-│   ├── analyzer.py            # 数据分析与 AI 洞察
-│   ├── report.py              # 报告生成器
-│   ├── config.py              # 配置管理
-│   ├── models.py              # 数据模型
-│   └── boss_zp/               # MCP 登录与 Boss 相关实现
-├── template/
-│   └── index.html             # Web 页面模板
-└── static/                    # Web 静态资源
-```
+## 为什么做CareerAI
 
-## 运行环境
+找工作时大家经常卡在这几件事：
+
+- 职位很多，但不知道市场真实要求是什么
+- 知道方向，但不清楚自己的优势和短板如何映射到岗位
+- 手动抓数据、做统计、写分析报告太慢
+- 同样的查询每次都要重复一堆步骤
+
+CareerAI把这条链路打通成一个流程：
+
+`输入需求 -> 自动抓取 -> 结构化分析 -> AI 洞察 -> 生成报告`
+
+你只需要给一句自然语言请求，系统会自动把后面的事做完。
+
+---
+
+## 核心能力
+
+| 模块 | 能力 | 说明 |
+|---|---|---|
+| 职位抓取 | 关键词搜索、推荐职位抓取 | 支持城市、页数、条件组合 |
+| 风控处理 | 自动识别风控场景 | 首轮有数据则继续分析，首轮无数据且风控才触发二轮 |
+| 数据分析 | 薪资、技能、地点、学历、经验、行业统计 | 可用于岗位画像和投递策略 |
+| 个性化画像 | 从自由文本提取目标、项目、技术栈、奖项、研究方向 | 支持简历式长文本 |
+| AI 洞察 | 结合市场数据和个人画像给出建议 | 支持 OpenAI 兼容模型 |
+| 报告生成 | Markdown / HTML / PDF | 报告中心可在线查看 |
+| 实时反馈 | 任务进度 + 事件流消息 | 抓取、分析、出报告过程可视化 |
+
+---
+
+## Web 流程
+
+### 1. 自动登录检测
+
+- 系统启动后自动检测是否已有 Boss 登录态
+- 已登录：提示“您已登录，进入首页”
+- 未登录：弹出 MCP 登录窗口引导扫码
+
+### 2. MCP 扫码登录（弹窗）
+
+- 点击按钮后在新窗口打开二维码
+- 用户扫码后系统自动检测并关闭二维码窗口
+- 主界面继续等待 Cookie 获取与写入完成
+
+### 3. 对话式任务执行
+
+- 用户输入自然语言请求
+- 后端创建任务并按阶段推进
+- 前端展示进度条和实时事件文本
+- 完成后自动刷新报告列表
+
+---
+
+## 快速开始
+
+### 环境要求
 
 - Python 3.10+
 - Windows / macOS / Linux
-- 建议使用虚拟环境
+- 推荐使用虚拟环境
 
-## 安装步骤
+### 安装
 
 ```bash
-# 1) 进入项目目录
-cd 职探AI
+# 进入项目目录
+cd CareerAI
 
-# 2) 创建并激活虚拟环境（Windows PowerShell）
+# 创建并激活虚拟环境（Windows PowerShell）
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 
-# 3) 安装依赖
+# 安装依赖
 pip install -r requirements.txt
 ```
 
-说明：若你使用了 `src/boss_zp` 下的 MCP 登录流程，可能还需要额外安装并初始化 Playwright（按该模块说明执行）。
+### 启动 Web 应用
+
+```bash
+python web_app.py
+```
+
+访问地址：`http://127.0.0.1:5000`
+
+---
+
+## CLI 命令
+
+入口文件：`src/main.py`
+
+```bash
+# 交互式初始化配置
+python src/main.py init
+
+# 设置 Cookie
+python src/main.py set-cookie --cookie "你的cookie" --bst "你的bst"
+
+# 关键词搜索并分析
+python src/main.py search --keyword "AI应用开发" --city 深圳 --pages 5
+
+# 搜索并输出 HTML 报告
+python src/main.py search --keyword "前端工程师" --city 上海 --html
+
+# 获取推荐职位并分析
+python src/main.py recommend --pages 2
+
+# 从已有数据文件生成分析
+python src/main.py analyze --file data/jobs_xxx.json --html
+```
+
+---
 
 ## 配置说明
 
-主要配置文件是 `config.json`，常用字段如下：
+主要配置文件：`config.json`
+
+常用字段：
 
 - `ai_api_key`: AI 服务密钥
-- `ai_base_url`: OpenAI 兼容接口地址（例如 DeepSeek chat/completions 地址）
+- `ai_base_url`: OpenAI 兼容接口地址
 - `ai_model`: 模型名称
 - `request_delay`: 抓取请求间隔（秒）
-- `max_pages_per_search`: 单次搜索最大页数
-- `cookie` / `bst`: Boss 登录态参数
+- `max_pages_per_search`: 单次最大抓取页数
+- `cookie` / `bst`: Boss 登录态
 
-你也可以通过环境变量覆盖部分配置，例如：
+支持环境变量覆盖：
+
 - `AI_API_KEY` / `OPENAI_API_KEY`
 - `AI_BASE_URL` / `OPENAI_BASE_URL`
 - `AI_MODEL`
 - `BOSS_COOKIE`
 - `BOSS_BST`
 
-## 命令行使用（CLI）
+---
 
-入口：`src/main.py`
+## 项目结构
 
-```bash
-# 初始化配置（交互式）
-python src/main.py init
-
-# 设置 Cookie
-python src/main.py set-cookie --cookie "你的cookie" --bst "你的bst"
-
-# 搜索职位并分析
-python src/main.py search --keyword "Python开发" --city 北京 --pages 3
-
-# 搜索并生成 HTML 报告
-python src/main.py search --keyword "前端工程师" --city 上海 --html
-
-# 获取推荐职位并分析
-python src/main.py recommend --pages 2
-
-# 从本地数据文件分析
-python src/main.py analyze --file data/jobs_xxx.json --html
+```text
+CareerAI/
+├── web_app.py
+├── config.json
+├── requirements.txt
+├── data/
+├── output/
+├── src/
+│   ├── main.py
+│   ├── scraper.py
+│   ├── analyzer.py
+│   ├── report.py
+│   ├── config.py
+│   ├── models.py
+│   └── boss_zp/
+├── template/
+│   └── index.html
+└── static/
 ```
 
-## Web 方式使用
+---
 
-启动：
+## 输出内容
 
-```bash
-python web_app.py
-```
-
-默认访问：`http://127.0.0.1:5000`
-
-Web 端核心接口（开发调试可用）：
-- `GET /api/status`: 系统状态
-- `GET /api/reports`: 报告列表
-- `GET /api/reports/<report_name>`: 报告内容
-- `POST /api/chat`: 发起对话分析任务
-- `GET /api/chat/task/<task_id>`: 查询任务进度
-- `POST /api/boss/login-save`: 保存 Cookie
-- `POST /api/boss/login-mcp`: 调用 MCP 登录
-
-## 输出结果
-
-- 抓取数据默认保存到 `data/`
-- 报告默认保存到 `output/`
+- 原始抓取数据输出到 `data/`
+- 报告输出到 `output/`
+- 报告格式包括：
   - `report_*.md`
   - `report_*.html`
   - `report_*.pdf`
 
-## 常见问题
+---
 
-- 提示未登录或抓取为空
-  - 请先确保 `config.json` 中 `cookie` 已配置且有效
-- AI 分析无结果
-  - 请检查 `ai_api_key`、`ai_base_url`、`ai_model` 是否正确
-- 报告未生成
-  - 检查 `output/` 目录权限、依赖是否完整安装
+## API 概览
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/status` | 系统状态 |
+| GET | `/api/reports` | 报告列表 |
+| GET | `/api/reports/<name>` | 报告内容 |
+| POST | `/api/chat` | 发起对话任务 |
+| GET | `/api/chat/task/<task_id>` | 查询任务状态 |
+| POST | `/api/boss/mcp-login/start` | 发起 MCP 登录 |
+| GET | `/api/boss/mcp-login/task/<task_id>` | 查询 MCP 登录状态 |
+| GET | `/api/boss/mcp-login/qr/<task_id>` | 获取登录二维码 |
+
+---
+
+## 常见问题 FAQ
+
+<details>
+<summary><strong>提示“未登录”或抓取结果为空怎么办？</strong></summary>
+
+先确认 MCP 登录流程已完成，`config.json` 中存在有效 `cookie`。若触发平台风控，系统会根据当前策略自动判断是否继续首轮数据分析或触发二轮重跑。
+</details>
+
+<details>
+<summary><strong>为什么任务执行看起来比较久？</strong></summary>
+
+流程包含抓取、统计、AI 洞察和 PDF 排版，任一环节都可能受网络或风控影响。前端会持续显示进度与事件消息，无需重复提交。
+</details>
+
+<details>
+<summary><strong>AI 分析内容为空或质量不稳定怎么办？</strong></summary>
+
+请检查 `ai_api_key`、`ai_base_url`、`ai_model` 是否正确。若未配置 AI Key，系统会回退到本地规则分析。
+</details>
+
+---
 
 ## 安全建议
 
-- `config.json` 可能包含敏感信息（API Key、Cookie），请勿上传到公开仓库
-- 建议使用环境变量注入密钥，并在版本管理中忽略本地私密配置
+- `config.json` 可能包含 Cookie 和 API Key，请勿上传公开仓库
+- 建议使用环境变量注入密钥
+- 建议将私密配置加入 `.gitignore`
+
+---
 
 ## 致谢
 
-感谢 `mcp-booszp` 开源项目提供的思路与实现参考，特别是在 Boss 登录流程与 MCP 能力集成方面提供了重要帮助。
+感谢相关开源生态的支持与启发：
 
-同时也感谢 `mcp-bosszp` 社区与相关开源组件（如 FastMCP、Playwright、Requests、PyCryptodome）的贡献。
+- FastMCP
+- Playwright
+- Requests
+- PyCryptodome
+- ReportLab
+
+---
 
 ## 免责声明
 
-本项目仅用于学习与技术研究。请在合法合规、遵守目标平台服务条款和相关法律法规的前提下使用。
+本项目仅用于学习与技术研究，请在合法合规并遵守目标平台服务条款与法律法规的前提下使用。

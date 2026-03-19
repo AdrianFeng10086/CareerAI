@@ -70,6 +70,12 @@ body {
     margin-bottom: 34px;
 }
 
+.top-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
 .brand-chip {
     border: 1px solid var(--line);
     border-radius: 999px;
@@ -129,7 +135,7 @@ body {
 
 .module-grid {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 18px;
 }
 
@@ -641,6 +647,35 @@ body {
 .login-hint {
     margin-top: 12px;
     color: var(--text-dim);
+}
+
+.auth-modal {
+    width: min(620px, calc(100vw - 2rem));
+    top: 16vh;
+}
+
+.auth-layout {
+    display: grid;
+    gap: 14px;
+}
+
+.auth-state {
+    border: 1px solid rgba(67, 210, 255, 0.26);
+    border-radius: 10px;
+    padding: 12px;
+    background: rgba(8, 31, 51, 0.72);
+    color: #dff2ff;
+}
+
+.auth-actions {
+    display: flex;
+    gap: 10px;
+}
+
+.auth-hint {
+    color: var(--text-dim);
+    font-size: 13px;
+    line-height: 1.6;
 }
 
 @keyframes blink {

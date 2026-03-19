@@ -346,7 +346,7 @@ class JobAnalyzer:
             url = f"{self.config.ai_base_url}"
             print("   🤖 正在调用 AI 生成深度分析...")
 
-            resp = req.post(url, headers=headers, json=payload, timeout=120)
+            resp = req.post(url, headers=headers, json=payload, timeout=60)
             resp.raise_for_status()
 
             data = resp.json()

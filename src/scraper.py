@@ -64,6 +64,23 @@ class BossZhipinScraper:
         self._pw_page = None
         self._use_browser = False  # 是否处于浏览器模式
         self._security_passed = False  # 安全验证是否已通过（可用 fetch）
+        self._last_run_meta: Dict[str, Any] = {
+            "entered_browser_mode": False,
+            "risk_blocked": False,
+            "blank_page": False,
+            "last_error": "",
+        }
+
+    def _reset_run_meta(self) -> None:
+        self._last_run_meta = {
+            "entered_browser_mode": False,
+            "risk_blocked": False,
+            "blank_page": False,
+            "last_error": "",
+        }
+
+    def get_last_run_meta(self) -> Dict[str, Any]:
+        return dict(self._last_run_meta)
 
     def _setup_session(self):
         """配置 HTTP 会话"""
@@ -333,6 +350,7 @@ class BossZhipinScraper:
 
             self._pw_page = self._pw_context.new_page()
             self._use_browser = True
+            self._last_run_meta["entered_browser_mode"] = True
             print("   ✅ 浏览器就绪")
             return True
             return True
@@ -430,11 +448,20 @@ class BossZhipinScraper:
         try:
             print(f"   🔗 导航到页面 (安全检查约需10秒)...")
             self._pw_page.goto(page_url, wait_until="domcontentloaded", timeout=60000)
+            current_url = str(self._pw_page.url or "")
+            if current_url.startswith("about:blank"):
+                self._last_run_meta["blank_page"] = True
+                self._last_run_meta["risk_blocked"] = True
+                self._last_run_meta["last_error"] = "浏览器跳转到空白页，疑似触发风控"
+                print("   ⚠️ 浏览器跳转到 about:blank，疑似触发风控")
         except Exception as e:
             print(f"   ⚠️ 导航: {e}")
+            self._last_run_meta["risk_blocked"] = True
+            self._last_run_meta["last_error"] = f"浏览器导航异常: {e}"
 
         # 轮询等待 API 响应（安全检查通常 ~10 秒完成）
-        max_wait_seconds = max(timeout // 1000, 30)
+        # 按产品要求固定等待 10 秒，避免长时间卡在安全检查轮询。
+        max_wait_seconds = 10
         for i in range(max_wait_seconds):
             # 检查是否捕获到成功的 API 响应
             for r in captured:
@@ -455,9 +482,14 @@ class BossZhipinScraper:
             code = last.get("code")
             msg = last.get("message", "")
             print(f"   ⚠️ API 返回 code={code}, msg={msg}")
+            if code != 0:
+                self._last_run_meta["risk_blocked"] = True
+                self._last_run_meta["last_error"] = msg or f"API 返回 code={code}"
             return last
 
         print(f"   ❌ 超时未捕获到 API 响应 (pattern={api_url_pattern})")
+        self._last_run_meta["risk_blocked"] = True
+        self._last_run_meta["last_error"] = "浏览器模式超时未捕获 API 响应"
         return None
 
     def _browser_fetch(self, api_url: str, params: dict, api_url_pattern: str = "") -> Optional[dict]:
@@ -490,11 +522,15 @@ class BossZhipinScraper:
                 if "访问行为异常" in msg or "安全验证" in msg:
                     # fetch 被拦截，标记安全验证失效
                     self._security_passed = False
+                    self._last_run_meta["risk_blocked"] = True
+                    self._last_run_meta["last_error"] = msg or "fetch 被安全验证拦截"
                     return None
                 return result  # 其他错误码，仍返回数据
         except Exception as e:
             # 页面可能在导航中，context 被销毁
             self._security_passed = False
+            self._last_run_meta["risk_blocked"] = True
+            self._last_run_meta["last_error"] = f"浏览器 fetch 异常: {e}"
             return None
         return None
 
@@ -612,6 +648,8 @@ class BossZhipinScraper:
             print("❌ 未登录，请先设置 Cookie")
             return []
 
+        self._reset_run_meta()
+
         all_jobs: List[JobDetail] = []
         current_page = query.page
 
@@ -723,6 +761,8 @@ class BossZhipinScraper:
         if not self.is_logged_in():
             print("❌ 未登录，请先设置 Cookie")
             return []
+
+        self._reset_run_meta()
 
         all_jobs: List[JobDetail] = []
 

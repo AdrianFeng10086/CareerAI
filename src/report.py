@@ -450,8 +450,11 @@ new Chart(document.getElementById('eduChart'), {{
             if user_profile.get("goals"):
                 story.append(Paragraph(f"目标方向: {html.escape('；'.join(user_profile['goals'][:4]))}", text_style))
 
-            if user_profile.get("strengths"):
-                story.append(Paragraph(f"已有优势: {html.escape('；'.join(user_profile['strengths'][:4]))}", text_style))
+            strengths_from_ai = self._extract_advantages_from_ai_insights(result.ai_insights)
+            if strengths_from_ai:
+                story.append(Paragraph(f"已有优势: {html.escape(strengths_from_ai)}", text_style))
+            elif user_profile.get("strengths"):
+                story.append(Paragraph(f"已有优势: {html.escape('；'.join(user_profile['strengths'][:8]))}", text_style))
 
             if user_profile.get("concerns"):
                 story.append(Paragraph(f"当前顾虑: {html.escape('；'.join(user_profile['concerns'][:4]))}", text_style))
@@ -545,6 +548,44 @@ new Chart(document.getElementById('eduChart'), {{
             print(f"📕 PDF 报告已保存: {filepath}")
 
         return filepath
+
+    def _extract_advantages_from_ai_insights(self, ai_text: str) -> str:
+        """从 AI 洞察文本中提取“已有优势/个人优势”段，避免报告里优势信息被截断。"""
+        text = str(ai_text or "")
+        if not text.strip():
+            return ""
+
+        lines = [x.strip() for x in text.splitlines()]
+        candidates = []
+        capturing = False
+
+        for line in lines:
+            if not line:
+                if capturing and candidates:
+                    break
+                continue
+
+            normalized = line.lstrip("#").strip()
+            if any(key in normalized for key in ("已有优势", "个人优势", "优势分析", "优势", "匹配优势")):
+                capturing = True
+                continue
+
+            if capturing:
+                # 遇到新的章节标题则停止。
+                if line.startswith("#") or re.match(r"^\d+\.", normalized):
+                    break
+
+                content = normalized
+                if content.startswith(('- ', '* ', '• ')):
+                    content = content[2:].strip()
+                if content:
+                    candidates.append(content)
+                if len(candidates) >= 6:
+                    break
+
+        if not candidates:
+            return ""
+        return "；".join(candidates)
 
     def _markdown_inline_to_reportlab(self, text: str) -> str:
         """将常见 Markdown 行内语法转换为 ReportLab 可识别标签。"""

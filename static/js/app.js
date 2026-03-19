@@ -8,11 +8,20 @@ const taskProgressStageEl = document.getElementById("task-progress-stage");
 const taskProgressPctEl = document.getElementById("task-progress-pct");
 const taskProgressMsgEl = document.getElementById("task-progress-msg");
 const taskProgressBarEl = document.getElementById("task-progress-bar");
+const authModalEl = document.getElementById("mcp-auth-modal");
+const authStateTextEl = document.getElementById("auth-state-text");
+const authHintTextEl = document.getElementById("auth-hint-text");
 let currentReport = { name: "", content: "", mode: "render" };
 let activeTaskId = "";
+let activeTaskLastEventId = 0;
 let reassureTimer = null;
 let reassureIndex = 0;
 let lastServerProgressMsg = "";
+let hasBossCookie = false;
+let mcpLoginTaskId = "";
+let mcpLoginPolling = false;
+let mcpQrWindow = null;
+let mcpScanHandled = false;
 
 const STAGE_LABELS = {
     queued: "任务排队",
@@ -38,6 +47,7 @@ const STAGE_LABELS = {
     "report.table": "排版职位表格",
     "report.ai": "排版AI洞察",
     "report.done": "PDF生成完成",
+    "retry.wind-control": "风控触发，自动重试",
     finalizing: "整理结果",
     done: "已完成",
     failed: "执行失败",
@@ -103,12 +113,149 @@ async function loadStatus() {
         if (!data.ok) {
             throw new Error("状态读取失败");
         }
+        hasBossCookie = !!data.has_cookie;
         statusEl.textContent = [
             data.has_cookie ? "Boss: 已登录" : "Boss: 未登录",
             data.ai_configured ? `AI: ${data.ai_model}` : "AI: 未配置Key(将走规则解析)",
         ].join(" | ");
+        return data;
     } catch (err) {
         statusEl.textContent = `状态异常: ${err.message}`;
+        return { ok: false, has_cookie: false };
+    }
+}
+
+function openAuthModal() {
+    if (!authModalEl) {
+        return;
+    }
+    authModalEl.classList.add("open");
+    authModalEl.setAttribute("aria-hidden", "false");
+}
+
+function closeAuthModal() {
+    if (!authModalEl) {
+        return;
+    }
+    if (!hasBossCookie) {
+        return;
+    }
+    authModalEl.classList.remove("open");
+    authModalEl.setAttribute("aria-hidden", "true");
+}
+
+function setAuthState(text, hint = "") {
+    if (authStateTextEl) {
+        authStateTextEl.textContent = text;
+    }
+    if (authHintTextEl && hint) {
+        authHintTextEl.textContent = hint;
+    }
+}
+
+function closeQrWindow() {
+    if (mcpQrWindow && !mcpQrWindow.closed) {
+        mcpQrWindow.close();
+    }
+}
+
+function openQrWindow(qrUrl) {
+    if (!qrUrl) {
+        return;
+    }
+    const win = window.open(qrUrl, "boss_mcp_qr", "width=420,height=540,resizable=yes,scrollbars=yes");
+    if (win) {
+        mcpQrWindow = win;
+    } else {
+        pushMessage("二维码窗口被浏览器拦截，请允许弹窗后重试。", "error");
+    }
+}
+
+async function startMcpLoginFlow() {
+    if (mcpLoginPolling) {
+        return;
+    }
+
+    try {
+        setAuthState("正在启动 MCP 登录流程...");
+        const resp = await fetch("/api/boss/mcp-login/start", { method: "POST" });
+        const data = await resp.json();
+        if (!resp.ok || !data.ok) {
+            throw new Error(data.message || "MCP 登录启动失败");
+        }
+
+        if (data.already_logged_in) {
+            hasBossCookie = true;
+            setAuthState("您已登录，进入首页。", "可以直接开始对话查询和生成报告。");
+            closeAuthModal();
+            await loadStatus();
+            return;
+        }
+
+        mcpLoginTaskId = data.task_id;
+        mcpScanHandled = false;
+        openQrWindow(data.qr_url);
+        setAuthState(
+            "二维码已在新窗口打开，请使用 Boss 直聘 APP 扫码。",
+            "检测到扫码后将自动关闭二维码窗口，并在当前页面继续等待 Cookie 获取完成。"
+        );
+        await pollMcpLoginTask(mcpLoginTaskId);
+    } catch (err) {
+        setAuthState(`登录启动失败: ${err.message}`);
+        pushMessage(`MCP 登录失败: ${err.message}`, "error");
+    }
+}
+
+async function pollMcpLoginTask(taskId) {
+    mcpLoginPolling = true;
+    let guard = 0;
+    try {
+        while (taskId && taskId === mcpLoginTaskId && guard < 720) {
+            guard += 1;
+            const resp = await fetch(`/api/boss/mcp-login/task/${encodeURIComponent(taskId)}`);
+            const data = await resp.json();
+            if (!resp.ok || !data.ok || !data.task) {
+                throw new Error(data.message || "登录状态获取失败");
+            }
+
+            const task = data.task;
+            const step = String(task.step || "");
+            const msg = String(task.message || "登录进行中...");
+            setAuthState(msg);
+
+            if (step === "scanned" && !mcpScanHandled) {
+                mcpScanHandled = true;
+                closeQrWindow();
+                setAuthState(
+                    "已检测到你完成扫码，二维码窗口已关闭。",
+                    "正在回到主界面继续等待登录凭证写入，请稍候。"
+                );
+            }
+
+            if (task.status === "done" && step === "logged_in") {
+                closeQrWindow();
+                hasBossCookie = true;
+                await loadStatus();
+                setAuthState("您已登录，进入首页。", "现在可以直接开始对话查询岗位。");
+                closeAuthModal();
+                pushMessage("MCP 登录成功，Cookie 获取完成。", "bot");
+                return;
+            }
+
+            if (task.status === "failed") {
+                closeQrWindow();
+                throw new Error(msg || "MCP 登录失败");
+            }
+
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
+
+        throw new Error("登录轮询超时，请重试");
+    } catch (err) {
+        setAuthState(`MCP 登录失败: ${err.message}`);
+        pushMessage(`MCP 登录失败: ${err.message}`, "error");
+    } finally {
+        mcpLoginPolling = false;
     }
 }
 
@@ -316,6 +463,7 @@ async function sendChatMessage(message) {
         }
 
         activeTaskId = data.task_id;
+    activeTaskLastEventId = 0;
         setTaskProgress(true, 0, "任务启动", "任务已启动，等待后端响应...");
         startReassureLoop();
         await pollTaskStatus(activeTaskId);
@@ -323,6 +471,19 @@ async function sendChatMessage(message) {
         stopReassureLoop();
         setTaskProgress(false, 0, "", "");
         pushMessage(`请求失败: ${err.message}`, "error");
+    }
+}
+
+function consumeTaskEvents(task) {
+    const events = Array.isArray(task?.events) ? task.events : [];
+    for (const evt of events) {
+        const evtId = Number(evt?.id) || 0;
+        if (evtId <= activeTaskLastEventId) {
+            continue;
+        }
+        activeTaskLastEventId = evtId;
+        const kind = evt?.kind === "error" ? "error" : "bot";
+        pushMessage(String(evt?.text || ""), kind);
     }
 }
 
@@ -379,24 +540,13 @@ async function pollTaskStatus(taskId) {
 
         const task = data.task;
         setTaskProgress(true, task.progress, task.stage, task.message);
+        consumeTaskEvents(task);
 
         if (task.status === "done") {
             stopReassureLoop();
             setTaskProgress(true, 100, "done", "任务完成");
             const result = task.result || {};
             pushMessage(result.message || "任务完成", "bot");
-            if (result.intent) {
-                pushMessage(
-                    `执行参数: action=${result.intent.action}, keyword=${result.intent.keyword || "(空)"}, city=${result.intent.city}, pages=${result.intent.pages}`,
-                    "bot"
-                );
-            }
-            if (result.report_file) {
-                pushMessage(`新报告已生成: ${result.report_file}，可在报告中心查看。`, "bot");
-            }
-            if (result.user_profile_summary) {
-                pushMessage(`个性化信息识别: ${result.user_profile_summary}`, "bot");
-            }
             await loadReports();
             setTimeout(() => setTaskProgress(false, 0, "", ""), 1600);
             return;
@@ -418,42 +568,36 @@ async function pollTaskStatus(taskId) {
     pushMessage("任务轮询超时，请稍后查看报告列表。", "error");
 }
 
-async function saveBossCookie(cookie, bst) {
-    const resp = await fetch("/api/boss/login-save", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cookie, bst }),
-    });
-
-    const data = await resp.json();
-    if (!resp.ok || !data.ok) {
-        throw new Error(data.message || "保存失败");
-    }
-
-    return data.message;
-}
-
-async function runMcpLogin() {
-    const resp = await fetch("/api/boss/login-mcp", { method: "POST" });
-    const data = await resp.json();
-    if (!resp.ok || !data.ok) {
-        throw new Error(data.message || "MCP 登录失败");
-    }
-    return data.message;
-}
-
 function bindEvents() {
     document.getElementById("open-reports")?.addEventListener("click", async () => {
+        if (!hasBossCookie) {
+            openAuthModal();
+            setAuthState("请先完成 MCP 登录后再查看报告。");
+            return;
+        }
         openPanel("reports-panel");
         await loadReports();
     });
 
     document.getElementById("open-chat")?.addEventListener("click", () => {
+        if (!hasBossCookie) {
+            openAuthModal();
+            setAuthState("请先完成 MCP 登录后再开始对话。");
+            return;
+        }
         openPanel("chat-panel");
     });
 
-    document.getElementById("open-login")?.addEventListener("click", () => {
-        openPanel("login-panel");
+    document.getElementById("open-auth-modal")?.addEventListener("click", () => {
+        openAuthModal();
+    });
+
+    document.getElementById("start-mcp-login")?.addEventListener("click", async () => {
+        await startMcpLoginFlow();
+    });
+
+    document.getElementById("close-auth-modal")?.addEventListener("click", () => {
+        closeAuthModal();
     });
 
     document.querySelectorAll("[data-close]").forEach((btn) => {
@@ -473,40 +617,22 @@ function bindEvents() {
         await sendChatMessage(text);
     });
 
-    document.getElementById("login-form")?.addEventListener("submit", async (e) => {
-        e.preventDefault();
-        const cookie = document.getElementById("cookie-input").value.trim();
-        const bst = document.getElementById("bst-input").value.trim();
-        if (!cookie) {
-            pushMessage("请先填写 Cookie", "error");
-            return;
-        }
-
-        try {
-            const msg = await saveBossCookie(cookie, bst);
-            pushMessage(msg, "bot");
-            await loadStatus();
-        } catch (err) {
-            pushMessage(`保存失败: ${err.message}`, "error");
-        }
-    });
-
-    document.getElementById("mcp-login")?.addEventListener("click", async () => {
-        pushMessage("正在发起 MCP 登录，请按终端提示完成扫码...", "bot");
-        try {
-            const msg = await runMcpLogin();
-            pushMessage(msg, "bot");
-            await loadStatus();
-        } catch (err) {
-            pushMessage(`MCP 登录失败: ${err.message}`, "error");
-        }
-    });
 }
 
 window.addEventListener("DOMContentLoaded", async () => {
     typeTitle();
     bindEvents();
-    await loadStatus();
+    const status = await loadStatus();
     await loadReports();
+    if (status.has_cookie) {
+        setAuthState("您已登录，进入首页。", "可以直接开始对话查询和生成报告。");
+        pushMessage("您已登录，进入首页。", "bot");
+    } else {
+        openAuthModal();
+        setAuthState(
+            "检测到你尚未登录 Boss，请点击按钮开始 MCP 扫码登录。",
+            "二维码会在新窗口打开，扫码后会自动关闭新窗口并回到本页面等待 Cookie 获取完成。"
+        );
+    }
     pushMessage("欢迎来到职探AI。你可以直接输入: 搜索北京Python开发3页并分析出报告", "bot");
 });

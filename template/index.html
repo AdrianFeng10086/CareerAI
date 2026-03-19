@@ -18,7 +18,10 @@
 <main class="page-wrap">
     <header class="top-bar">
         <div class="brand-chip">ZT-AI CORE</div>
-        <div class="status" id="app-status">系统状态检测中...</div>
+        <div class="top-right">
+            <div class="status" id="app-status">系统状态检测中...</div>
+            <button class="ghost-btn" id="open-auth-modal">MCP 登录</button>
+        </div>
     </header>
 
     <section class="hero">
@@ -38,12 +41,6 @@
             <h2>开始对话</h2>
             <p>通过自然语言下达任务: 搜索岗位、分析数据、生成报告。</p>
             <button class="module-btn" id="open-chat">进入对话引擎</button>
-        </article>
-
-        <article class="module-card" id="card-login">
-            <h2>Boss 登录</h2>
-            <p>保存 Cookie / BST，授权系统读取 Boss 直聘职位数据。</p>
-            <button class="module-btn" id="open-login">打开登录面板</button>
         </article>
     </section>
 </main>
@@ -83,26 +80,18 @@
     </div>
 </section>
 
-<section class="panel" id="login-panel" aria-hidden="true">
+<section class="panel auth-modal" id="mcp-auth-modal" aria-hidden="true">
     <div class="panel-header">
-        <h3>Boss 登录</h3>
-        <button class="panel-close" data-close="login-panel">关闭</button>
+        <h3>MCP 扫码登录</h3>
+        <button class="panel-close" id="close-auth-modal">关闭</button>
     </div>
-    <div class="panel-body login-layout">
-        <form id="login-form" class="login-form">
-            <label for="cookie-input">Cookie</label>
-            <textarea id="cookie-input" rows="5" placeholder="粘贴完整 Cookie"></textarea>
-
-            <label for="bst-input">BST (可选)</label>
-            <input id="bst-input" type="text" placeholder="可选">
-
-            <div class="login-actions">
-                <button type="submit" class="module-btn">保存 Cookie</button>
-                <button type="button" class="ghost-btn" id="mcp-login">MCP 扫码登录</button>
-            </div>
-        </form>
-        <div class="login-hint">
-            保存后对话模块即可直接执行搜索和分析流程。
+    <div class="panel-body auth-layout">
+        <div class="auth-state" id="auth-state-text">正在检测登录状态...</div>
+        <div class="auth-actions">
+            <button type="button" class="module-btn" id="start-mcp-login">打开二维码并开始登录</button>
+        </div>
+        <div class="auth-hint" id="auth-hint-text">
+            将在新窗口打开 Boss 二维码，请使用手机扫码。检测到扫码后会自动关闭二维码窗口，并在本页等待 Cookie 获取完成。
         </div>
     </div>
 </section>
