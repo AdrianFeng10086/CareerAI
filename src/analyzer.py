@@ -4,6 +4,7 @@ AI 职位分析模块
 """
 
 import json
+import time
 from typing import List, Dict, Any, Optional, Tuple, Callable
 from collections import Counter
 from datetime import datetime
@@ -17,6 +18,7 @@ class JobAnalyzer:
 
     def __init__(self, config: Config):
         self.config = config
+        self.ai_provider_used: str = ""
 
     def analyze(
         self,
@@ -262,15 +264,27 @@ class JobAnalyzer:
 
         如果未配置 AI API Key，则使用本地规则生成基础分析
         """
-        if self.config.ai_api_key:
+        if self.config.ai_api_key or self.config.backup_ai_api_key:
             return self._call_ai_api(result, jobs)
         else:
             return self._generate_local_insights(result, jobs)
+
+    def _build_chat_completions_url(self, base_url: str) -> str:
+        """将配置中的 base_url 规范化为 chat/completions 完整地址。"""
+        url = str(base_url or "").strip().rstrip("/")
+        if not url:
+            return ""
+        if url.endswith("/chat/completions"):
+            return url
+        if url.endswith("/v1"):
+            return f"{url}/chat/completions"
+        return f"{url}/chat/completions"
 
     def _call_ai_api(self, result: AnalysisResult, jobs: List[JobDetail]) -> str:
         """调用 AI API 生成分析"""
         try:
             import requests as req
+            from requests.exceptions import ConnectionError, Timeout, ChunkedEncodingError
 
             # 构建 prompt
             top_skills = list(result.skill_summary.items())[:20]
@@ -327,34 +341,94 @@ class JobAnalyzer:
 6. **风险提示**：市场上有哪些需要注意的点？
 """
 
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.config.ai_api_key}",
-            }
-
-            payload = {
-                "model": self.config.ai_model,
-                "messages": [
-                    {"role": "system", "content": "你是一位资深的职业规划顾问，擅长数据分析和职业建议。请用中文回答，给出有洞察力和可操作性的建议。"},
-                    {"role": "user", "content": prompt}
-                ],
-                "temperature": self.config.ai_temperature,
-                # 放宽输出上限，减少回答被截断导致的信息不完整。
-                "max_tokens": min(max(self.config.ai_max_tokens, 3000), 7000),
-            }
-
-            url = f"{self.config.ai_base_url}"
             print("   🤖 正在调用 AI 生成深度分析...")
 
-            resp = req.post(url, headers=headers, json=payload, timeout=60)
-            resp.raise_for_status()
+            self.ai_provider_used = ""
+            providers = [
+                {
+                    "name": "主AI",
+                    "api_key": self.config.ai_api_key,
+                    "base_url": self._build_chat_completions_url(self.config.ai_base_url),
+                    "model": self.config.ai_model,
+                    "enable_enhancement": False,
+                }
+            ]
+            if self.config.backup_ai_api_key:
+                providers.append(
+                    {
+                        "name": "备用AI",
+                        "api_key": self.config.backup_ai_api_key,
+                        "base_url": self._build_chat_completions_url(self.config.backup_ai_base_url),
+                        "model": self.config.backup_ai_model,
+                        "enable_enhancement": bool(self.config.backup_ai_enable_enhancement),
+                    }
+                )
 
-            data = resp.json()
-            content = data["choices"][0]["message"]["content"]
-            print("   ✅ AI 分析完成")
-            return content
+            last_err: Exception | None = None
+            for p_idx, provider in enumerate(providers):
+                if p_idx > 0:
+                    print(f"   🔁 主AI不可用，切换到{provider['name']}继续分析...")
+
+                headers = {
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {provider['api_key']}",
+                }
+                payload = {
+                    "model": provider["model"],
+                    "messages": [
+                        {"role": "system", "content": "你是一位资深的职业规划顾问，擅长数据分析和职业建议。请用中文回答，给出有洞察力和可操作性的建议。"},
+                        {"role": "user", "content": prompt}
+                    ],
+                    "temperature": self.config.ai_temperature,
+                    # 放宽输出上限，减少回答被截断导致的信息不完整。
+                    "max_tokens": min(max(self.config.ai_max_tokens, 3000), 7000),
+                }
+                if provider.get("enable_enhancement"):
+                    payload["enable_enhancement"] = True
+
+                max_attempts = 3
+                for attempt in range(1, max_attempts + 1):
+                    try:
+                        # 分离连接超时和读取超时，减少长输出时的误判失败。
+                        resp = req.post(provider["base_url"], headers=headers, json=payload, timeout=(15, 120))
+                        resp.raise_for_status()
+
+                        data = resp.json()
+                        content = data["choices"][0]["message"]["content"]
+                        self.ai_provider_used = str(provider.get("name", ""))
+                        print(f"   ✅ AI 分析完成 ({provider['name']} 第{attempt}次请求成功)")
+                        return content
+                    except (ConnectionError, Timeout, ChunkedEncodingError) as e:
+                        last_err = e
+                        if attempt >= max_attempts:
+                            break
+                        sleep_seconds = 1.5 * attempt
+                        print(
+                            f"   ⚠️ {provider['name']} 网络异常(第{attempt}/{max_attempts}次): {e}; "
+                            f"{sleep_seconds:.1f}s 后自动重试..."
+                        )
+                        time.sleep(sleep_seconds)
+                    except req.HTTPError as e:
+                        status_code = getattr(e.response, "status_code", 0)
+                        if status_code in {429, 500, 502, 503, 504}:
+                            last_err = e
+                            if attempt < max_attempts:
+                                sleep_seconds = 1.5 * attempt
+                                print(
+                                    f"   ⚠️ {provider['name']} 服务暂时不可用(HTTP {status_code}, 第{attempt}/{max_attempts}次); "
+                                    f"{sleep_seconds:.1f}s 后自动重试..."
+                                )
+                                time.sleep(sleep_seconds)
+                                continue
+                            break
+                        raise
+
+            if last_err is not None:
+                raise last_err
+            raise RuntimeError("AI 请求未返回结果")
 
         except Exception as e:
+            self.ai_provider_used = "local"
             print(f"   ⚠️ AI 分析失败: {e}")
             print("   📝 使用本地规则生成分析...")
             return self._generate_local_insights(result, jobs)

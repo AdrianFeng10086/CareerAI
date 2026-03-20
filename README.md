@@ -142,6 +142,9 @@ python src/main.py analyze --file data/jobs_xxx.json --html
 - `ai_api_key`: AI 服务密钥
 - `ai_base_url`: OpenAI 兼容接口地址
 - `ai_model`: 模型名称
+- `backup_ai_api_key`: 备用 AI 密钥（主 AI 连接异常时自动切换）
+- `backup_ai_base_url`: 备用 AI OpenAI 兼容地址（如混元）
+- `backup_ai_model`: 备用模型名称（如 `hunyuan-turbos-latest`）
 - `request_delay`: 抓取请求间隔（秒）
 - `max_pages_per_search`: 单次最大抓取页数
 - `cookie` / `bst`: Boss 登录态
@@ -151,6 +154,9 @@ python src/main.py analyze --file data/jobs_xxx.json --html
 - `AI_API_KEY` / `OPENAI_API_KEY`
 - `AI_BASE_URL` / `OPENAI_BASE_URL`
 - `AI_MODEL`
+- `BACKUP_AI_API_KEY` / `HUNYUAN_API_KEY`
+- `BACKUP_AI_BASE_URL` / `HUNYUAN_BASE_URL`
+- `BACKUP_AI_MODEL` / `HUNYUAN_MODEL`
 - `BOSS_COOKIE`
 - `BOSS_BST`
 

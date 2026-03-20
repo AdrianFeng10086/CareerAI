@@ -450,9 +450,9 @@ new Chart(document.getElementById('eduChart'), {{
             if user_profile.get("goals"):
                 story.append(Paragraph(f"目标方向: {html.escape('；'.join(user_profile['goals'][:4]))}", text_style))
 
-            strengths_from_ai = self._extract_advantages_from_ai_insights(result.ai_insights)
-            if strengths_from_ai:
-                story.append(Paragraph(f"已有优势: {html.escape(strengths_from_ai)}", text_style))
+            strengths_summary = str(user_profile.get("personal_strengths_summary", "")).strip()
+            if strengths_summary:
+                story.append(Paragraph(f"已有优势: {html.escape(strengths_summary)}", text_style))
             elif user_profile.get("strengths"):
                 story.append(Paragraph(f"已有优势: {html.escape('；'.join(user_profile['strengths'][:8]))}", text_style))
 

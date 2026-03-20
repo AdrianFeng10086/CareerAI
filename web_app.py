@@ -53,6 +53,8 @@ class ChatIntent:
     keyword: str
     city: str
     pages: int
+    personal_strengths_summary: str = ""
+    intent_provider: str = ""
 
 
 def _safe_int(value: Any, default: int) -> int:
@@ -60,6 +62,53 @@ def _safe_int(value: Any, default: int) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _extract_json_block(text: str) -> Dict[str, Any]:
+    """从模型返回文本中提取 JSON 对象，兼容代码块包裹。"""
+    raw = str(text or "").strip()
+    if not raw:
+        return {}
+
+    try:
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        pass
+
+    if "```" in raw:
+        candidate = raw
+        candidate = re.sub(r"^```(?:json)?\\s*", "", candidate, flags=re.IGNORECASE)
+        candidate = re.sub(r"\\s*```$", "", candidate)
+        candidate = candidate.strip()
+        try:
+            parsed = json.loads(candidate)
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            pass
+
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        try:
+            parsed = json.loads(raw[start : end + 1])
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            return {}
+
+    return {}
+
+
+def _build_chat_completions_url(base_url: str) -> str:
+    """将配置中的 base_url 规范化为 chat/completions 完整地址。"""
+    url = str(base_url or "").strip().rstrip("/")
+    if not url:
+        return ""
+    if url.endswith("/chat/completions"):
+        return url
+    if url.endswith("/v1"):
+        return f"{url}/chat/completions"
+    return f"{url}/chat/completions"
 
 
 def _collect_report_files() -> List[Dict[str, Any]]:
@@ -100,50 +149,106 @@ def _render_markdown_to_html(content: str) -> str:
 
 def _ask_llm_for_intent(config: Config, message: str) -> ChatIntent | None:
     """在配置了 AI Key 时，尝试让模型把自然语言转为结构化查询。"""
-    if not config.ai_api_key:
+    if not config.ai_api_key and not config.backup_ai_api_key:
         return None
 
-    base_url = config.ai_base_url.rstrip("/")
-    if not base_url.endswith("/chat/completions"):
-        base_url = f"{base_url}/chat/completions"
+    providers = [
+        {
+            "name": "主AI",
+            "api_key": config.ai_api_key,
+            "base_url": _build_chat_completions_url(config.ai_base_url),
+            "model": config.ai_model,
+            "enable_enhancement": False,
+        }
+    ]
+    if config.backup_ai_api_key:
+        providers.append(
+            {
+                "name": "备用AI",
+                "api_key": config.backup_ai_api_key,
+                "base_url": _build_chat_completions_url(config.backup_ai_base_url),
+                "model": config.backup_ai_model,
+                "enable_enhancement": bool(config.backup_ai_enable_enhancement),
+            }
+        )
 
     city_list = "、".join(CITY_CODES.keys())
     prompt = (
         "你是职位搜索助手，请把用户请求解析成 JSON。"
         "只返回 JSON，不要解释。"
-        "字段: action(search|recommend), keyword, city, pages。"
+        "字段: action(search|recommend), keyword, city, pages, personal_strengths_summary。"
         f"city 必须从这些城市里选择: {city_list}。"
         "pages 必须是 1 到 5 的整数。"
         "如果用户没有明确关键词，keyword 用空字符串。"
+        "personal_strengths_summary 用 60-120 字中文总结用户输入中体现的个人优势；"
+        "如果无法判断，返回空字符串。"
         f"用户输入: {message}"
     )
 
-    payload = {
-        "model": config.ai_model,
-        "messages": [
-            {"role": "system", "content": "你只输出 JSON。"},
-            {"role": "user", "content": prompt},
-        ],
-        "temperature": 0.1,
-        "max_tokens": 200,
-    }
-
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {config.ai_api_key}",
-    }
-
     try:
-        resp = requests.post(base_url, json=payload, headers=headers, timeout=20)
-        resp.raise_for_status()
-        data = resp.json()
-        content = data["choices"][0]["message"]["content"]
-        parsed = json.loads(content)
+        from requests.exceptions import ConnectionError, Timeout, ChunkedEncodingError
+
+        parsed: Dict[str, Any] = {}
+        selected_provider = ""
+        for p_idx, provider in enumerate(providers):
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {provider['api_key']}",
+            }
+            payload = {
+                "model": provider["model"],
+                "messages": [
+                    {"role": "system", "content": "你只输出 JSON。"},
+                    {"role": "user", "content": prompt},
+                ],
+                "temperature": 0.1,
+                "max_tokens": 200,
+            }
+            if provider.get("enable_enhancement"):
+                payload["enable_enhancement"] = True
+
+            max_attempts = 3
+            provider_success = False
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    resp = requests.post(provider["base_url"], json=payload, headers=headers, timeout=(10, 25))
+                    resp.raise_for_status()
+                    data = resp.json()
+                    content = data["choices"][0]["message"]["content"]
+                    parsed = _extract_json_block(content)
+                    if parsed:
+                        provider_success = True
+                        break
+                except (ConnectionError, Timeout, ChunkedEncodingError):
+                    if attempt >= max_attempts:
+                        break
+                    time.sleep(0.8 * attempt)
+                except requests.HTTPError as e:
+                    status_code = getattr(e.response, "status_code", 0)
+                    if status_code in {429, 500, 502, 503, 504}:
+                        if attempt < max_attempts:
+                            time.sleep(0.8 * attempt)
+                            continue
+                        break
+                    return None
+
+            if provider_success and parsed:
+                selected_provider = str(provider.get("name", ""))
+                break
+
+            has_next = p_idx < len(providers) - 1
+            if has_next:
+                continue
+
+        if not parsed:
+            return None
 
         action = parsed.get("action", "search")
         city = parsed.get("city", "北京")
         pages = max(1, min(5, _safe_int(parsed.get("pages"), 2)))
         keyword = str(parsed.get("keyword", "")).strip()
+        personal_strengths_summary = str(parsed.get("personal_strengths_summary", "")).strip()
+        personal_strengths_summary = personal_strengths_summary[:220]
 
         if city not in CITY_CODES:
             city = "北京"
@@ -151,7 +256,14 @@ def _ask_llm_for_intent(config: Config, message: str) -> ChatIntent | None:
         if action not in {"search", "recommend"}:
             action = "search"
 
-        return ChatIntent(action=action, keyword=keyword, city=city, pages=pages)
+        return ChatIntent(
+            action=action,
+            keyword=keyword,
+            city=city,
+            pages=pages,
+            personal_strengths_summary=personal_strengths_summary,
+            intent_provider=selected_provider,
+        )
     except Exception:
         return None
 
@@ -186,7 +298,7 @@ def _fallback_intent(message: str) -> ChatIntent:
         cleaned = cleaned.strip(" ，,。.!！?？")
         keyword = cleaned[:30] if cleaned else "Python开发"
 
-    return ChatIntent(action=action, keyword=keyword, city=city, pages=pages)
+    return ChatIntent(action=action, keyword=keyword, city=city, pages=pages, intent_provider="规则解析")
 
 
 def _parse_intent(config: Config, message: str) -> ChatIntent:
@@ -320,6 +432,8 @@ def _profile_summary_text(profile: Dict[str, Any]) -> str:
         parts.append(f"项目经历: {len(profile['projects'])}条")
     if profile.get("tech_stack"):
         parts.append(f"技术栈: {', '.join(profile['tech_stack'][:3])}")
+    if profile.get("personal_strengths_summary"):
+        parts.append(f"优势总结: {profile['personal_strengths_summary'][:60]}")
     if profile.get("concerns"):
         parts.append(f"顾虑: {profile['concerns'][0]}")
     return " | ".join(parts) if parts else "已提取到个人经历信息。"
@@ -643,6 +757,8 @@ def _run_pipeline(
         step(3, "rule.intent.start", "未配置 AI，正在使用规则解析意图...")
 
     intent = _parse_intent(config, message)
+    if intent.intent_provider == "备用AI":
+        emit("提示: 意图解析阶段主AI不可用，已自动切换到备用模型（混元）。")
     emit(
         f"执行参数: action={intent.action}, keyword={intent.keyword or '(空)'}, city={intent.city}, pages={intent.pages}"
     )
@@ -652,8 +768,15 @@ def _run_pipeline(
     else:
         step(8, "rule.intent.done", "规则意图解析完成，正在提取你的个人经历信息...")
     user_profile = _extract_user_profile(message)
+    if intent.personal_strengths_summary:
+        user_profile["personal_strengths_summary"] = intent.personal_strengths_summary
+        strengths = user_profile.setdefault("strengths", [])
+        if intent.personal_strengths_summary not in strengths and len(strengths) < 10:
+            strengths.insert(0, intent.personal_strengths_summary)
     step(12, "profile", f"已提取个人信息: {_profile_summary_text(user_profile)}")
     emit(f"个性化信息识别: {_profile_summary_text(user_profile)}")
+    if intent.personal_strengths_summary:
+        emit(f"AI优势总结: {intent.personal_strengths_summary}")
 
     scraper = BossZhipinScraper(config)
     analyzer = JobAnalyzer(config)
@@ -709,52 +832,80 @@ def _run_pipeline(
     data_path = scraper.save_jobs(jobs)
     emit(f"原始数据已保存: {os.path.basename(data_path)}")
 
-    def on_analyze_progress(local_pct: int, stage: str, msg: str) -> None:
-        mapped = 60 + int(max(0, min(100, local_pct)) * 0.22)
-        step(mapped, stage, msg)
+    data_destroyed = False
+    result_payload: Dict[str, Any] | None = None
+    try:
+        def on_analyze_progress(local_pct: int, stage: str, msg: str) -> None:
+            mapped = 60 + int(max(0, min(100, local_pct)) * 0.22)
+            step(mapped, stage, msg)
 
-    step(62, "analyzing.start", "开始深度分析，这一步会做多维统计与个性化建议生成...")
-    analysis = analyzer.analyze(
-        jobs,
-        query=query_name,
-        user_profile=user_profile,
-        progress_callback=on_analyze_progress,
-    )
+        step(62, "analyzing.start", "开始深度分析，这一步会做多维统计与个性化建议生成...")
+        analysis = analyzer.analyze(
+            jobs,
+            query=query_name,
+            user_profile=user_profile,
+            progress_callback=on_analyze_progress,
+        )
+        if getattr(analyzer, "ai_provider_used", "") == "备用AI":
+            emit("提示: 深度分析阶段主AI不可用，已自动切换到备用模型（混元）。")
 
-    def on_report_progress(local_pct: int, stage: str, msg: str) -> None:
-        mapped = 84 + int(max(0, min(100, local_pct)) * 0.14)
-        step(mapped, stage, msg)
+        def on_report_progress(local_pct: int, stage: str, msg: str) -> None:
+            mapped = 84 + int(max(0, min(100, local_pct)) * 0.14)
+            step(mapped, stage, msg)
 
-    step(84, "report.start", "正在生成 PDF 报告，请稍等，排版阶段可能略久...")
-    reporter.generate_pdf(analysis, jobs, save=True, progress_callback=on_report_progress)
-    step(99, "finalizing", "报告生成完毕，正在整理结果...")
+        step(84, "report.start", "正在生成 PDF 报告，请稍等，排版阶段可能略久...")
+        reporter.generate_pdf(analysis, jobs, save=True, progress_callback=on_report_progress)
+        step(99, "finalizing", "报告生成完毕，正在整理结果...")
 
-    report_after = _collect_report_files()
-    new_reports = [x for x in report_after if x["name"] not in report_snapshot]
-    latest_report = (new_reports[0]["name"] if new_reports else report_after[0]["name"])
+        report_after = _collect_report_files()
+        new_reports = [x for x in report_after if x["name"] not in report_snapshot]
+        latest_report = (new_reports[0]["name"] if new_reports else report_after[0]["name"])
 
-    summary = (
-        f"任务完成: 已执行{intent.action}流程, 共抓取 {len(jobs)} 条职位, "
-        f"并生成报告 `{latest_report}`。"
-    )
-    emit(f"新报告已生成: {latest_report}，可在报告中心查看。")
+        summary = (
+            f"任务完成: 已执行{intent.action}流程, 共抓取 {len(jobs)} 条职位, "
+            f"并生成报告 `{latest_report}`。"
+        )
+        emit(f"新报告已生成: {latest_report}，可在报告中心查看。")
+
+        result_payload = {
+            "ok": True,
+            "message": summary,
+            "intent": {
+                "action": intent.action,
+                "keyword": intent.keyword,
+                "city": intent.city,
+                "pages": intent.pages,
+                "personal_strengths_summary": intent.personal_strengths_summary,
+                "intent_provider": intent.intent_provider,
+            },
+            "jobs_count": len(jobs),
+            "risk_control_detected": risk_detected,
+            "scrape_meta": scrape_meta,
+            "user_profile": user_profile,
+            "user_profile_summary": _profile_summary_text(user_profile),
+            "data_file": os.path.basename(data_path),
+            "data_destroyed": data_destroyed,
+            "report_file": latest_report,
+        }
+    finally:
+        try:
+            if data_path and os.path.exists(data_path):
+                os.remove(data_path)
+                data_destroyed = True
+                step(100, "cleanup.data", "任务结束，已销毁本次抓取的原始数据文件。")
+                emit(f"原始数据已销毁: {os.path.basename(data_path)}")
+        except Exception as cleanup_err:
+            emit(f"原始数据销毁失败(不影响报告): {cleanup_err}", kind="error")
+
+    if result_payload is not None:
+        result_payload["data_destroyed"] = data_destroyed
+        return result_payload
 
     return {
-        "ok": True,
-        "message": summary,
-        "intent": {
-            "action": intent.action,
-            "keyword": intent.keyword,
-            "city": intent.city,
-            "pages": intent.pages,
-        },
-        "jobs_count": len(jobs),
+        "ok": False,
+        "message": "任务未生成结果",
         "risk_control_detected": risk_detected,
         "scrape_meta": scrape_meta,
-        "user_profile": user_profile,
-        "user_profile_summary": _profile_summary_text(user_profile),
-        "data_file": os.path.basename(data_path),
-        "report_file": latest_report,
     }
 
 

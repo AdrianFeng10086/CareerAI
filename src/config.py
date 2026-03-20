@@ -22,6 +22,12 @@ class Config:
     ai_temperature: float = 0.7
     ai_max_tokens: int = 4096
 
+    # 备用 AI 配置（主 AI 连接异常时自动切换）
+    backup_ai_api_key: str = ""
+    backup_ai_base_url: str = "https://api.hunyuan.cloud.tencent.com/v1/chat/completions"
+    backup_ai_model: str = "hunyuan-turbos-latest"
+    backup_ai_enable_enhancement: bool = True
+
     # 爬取配置
     request_delay: float = 1.5          # 请求间隔(秒)，避免被封
     max_retry: int = 3                  # 最大重试次数
@@ -61,6 +67,12 @@ class Config:
             "AI_BASE_URL": "ai_base_url",
             "OPENAI_BASE_URL": "ai_base_url",
             "AI_MODEL": "ai_model",
+            "BACKUP_AI_API_KEY": "backup_ai_api_key",
+            "BACKUP_AI_BASE_URL": "backup_ai_base_url",
+            "BACKUP_AI_MODEL": "backup_ai_model",
+            "HUNYUAN_API_KEY": "backup_ai_api_key",
+            "HUNYUAN_BASE_URL": "backup_ai_base_url",
+            "HUNYUAN_MODEL": "backup_ai_model",
             "BOSS_COOKIE": "cookie",
             "BOSS_BST": "bst",
         }
@@ -92,6 +104,10 @@ class Config:
             "ai_model": self.ai_model,
             "ai_temperature": self.ai_temperature,
             "ai_max_tokens": self.ai_max_tokens,
+            "backup_ai_api_key": self.backup_ai_api_key,
+            "backup_ai_base_url": self.backup_ai_base_url,
+            "backup_ai_model": self.backup_ai_model,
+            "backup_ai_enable_enhancement": self.backup_ai_enable_enhancement,
             "request_delay": self.request_delay,
             "max_retry": self.max_retry,
             "max_pages_per_search": self.max_pages_per_search,
