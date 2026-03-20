@@ -7,8 +7,9 @@ import os
 import json
 import html
 import re
+import math
 import unicodedata
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from datetime import datetime
 
 from .models import JobDetail, AnalysisResult
@@ -158,6 +159,27 @@ class ReportGenerator:
         sal_labels = json.dumps(list(sal_dist.keys()), ensure_ascii=False)
         sal_values = json.dumps(list(sal_dist.values()))
 
+        # 六边形竞争力图（雷达）
+        user_profile = result.user_profile or {}
+        total_jobs = max(1, int(result.total_jobs or 0))
+        skills_n = len(result.skill_summary or {})
+        goals_n = len(user_profile.get("goals", []))
+        strengths_n = len(user_profile.get("strengths", []))
+        concerns_n = len(user_profile.get("concerns", []))
+        exp_summary = result.experience_summary or {}
+        edu_summary = result.education_summary or {}
+
+        skill_match = min(100, int(skills_n / 12 * 100))
+        salary_comp = min(100, int((result.salary_summary or {}).get("avg_annual_salary_k", 0) / 300 * 100))
+        exp_fit = min(100, int(sum(exp_summary.values()) / total_jobs * 100))
+        edu_fit = min(100, int(sum(edu_summary.values()) / total_jobs * 100))
+        market_heat = min(100, int(total_jobs / 120 * 100))
+        clarity = min(100, int((goals_n * 20 + strengths_n * 10 - concerns_n * 8) + 40))
+        clarity = max(0, min(100, clarity))
+
+        radar_labels = json.dumps(["Skill", "Salary", "ExpFit", "EduFit", "Heat", "Goal"])
+        radar_values = json.dumps([skill_match, salary_comp, exp_fit, edu_fit, market_heat, clarity])
+
         # 职位表格
         job_rows = ""
         for i, job in enumerate(jobs, 1):
@@ -267,6 +289,12 @@ class ReportGenerator:
                 <canvas id="eduChart"></canvas>
             </div>
         </div>
+        <div class="card">
+            <h2>🧭 六边形竞争力图</h2>
+            <div class="chart-container">
+                <canvas id="radarChart"></canvas>
+            </div>
+        </div>
     </div>
 
     <!-- AI 分析 -->
@@ -326,6 +354,33 @@ new Chart(document.getElementById('eduChart'), {{
         datasets: [{{ data: {json.dumps(list(result.education_summary.values()))}, backgroundColor: ['#667eea','#764ba2','#f093fb','#f5576c','#4facfe','#00f2fe'] }}]
     }},
     options: {{ responsive: true, maintainAspectRatio: false }}
+}});
+
+// 六边形竞争力图
+new Chart(document.getElementById('radarChart'), {{
+    type: 'radar',
+    data: {{
+        labels: {radar_labels},
+        datasets: [{{
+            label: '竞争力评分',
+            data: {radar_values},
+            backgroundColor: 'rgba(47, 111, 182, 0.25)',
+            borderColor: 'rgba(47, 111, 182, 0.95)',
+            borderWidth: 2,
+            pointBackgroundColor: 'rgba(47, 111, 182, 0.95)'
+        }}]
+    }},
+    options: {{
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {{
+            r: {{
+                suggestedMin: 0,
+                suggestedMax: 100,
+                ticks: {{ stepSize: 20 }}
+            }}
+        }}
+    }}
 }});
 </script>
 </body>
@@ -461,6 +516,31 @@ new Chart(document.getElementById('eduChart'), {{
 
             story.append(Spacer(1, 4 * mm))
 
+        # 图表洞察：使用适配数据特征的图形（直方图 / 饼图 / 六边形雷达图）
+        story.append(Paragraph("图表洞察", section_style))
+
+        skill_chart, skill_legend = self._build_skill_histogram_drawing(result)
+        if skill_chart is not None:
+            story.append(Paragraph("1) 热门技能直方图", text_style))
+            story.append(skill_chart)
+            if skill_legend:
+                story.append(Paragraph(f"技能映射: {html.escape(skill_legend)}", text_style))
+            story.append(Spacer(1, 3 * mm))
+
+        salary_chart = self._build_salary_pie_drawing(result)
+        if salary_chart is not None:
+            story.append(Paragraph("2) 薪资分布饼图", text_style))
+            story.append(salary_chart)
+            story.append(Spacer(1, 3 * mm))
+
+        hex_chart = self._build_competency_hexagon_drawing(result, user_profile)
+        if hex_chart is not None:
+            story.append(Paragraph("3) 六边形竞争力图", text_style))
+            story.append(hex_chart)
+            story.append(Spacer(1, 4 * mm))
+
+        step(42, "report.charts", "图表洞察已生成，正在继续排版正文...")
+
         story.append(Paragraph("热门技能 Top 10", section_style))
         for i, (skill, count) in enumerate(list(result.skill_summary.items())[:10], 1):
             story.append(Paragraph(f"{i}. {html.escape(str(skill))}: {count}", text_style))
@@ -549,6 +629,174 @@ new Chart(document.getElementById('eduChart'), {{
 
         return filepath
 
+    def _build_skill_histogram_drawing(self, result: AnalysisResult):
+        """构建技能直方图（Top 8）。"""
+        try:
+            from reportlab.graphics.shapes import Drawing, String
+            from reportlab.graphics.charts.barcharts import VerticalBarChart
+            from reportlab.lib import colors
+        except Exception:
+            return None, ""
+
+        top_items = list(result.skill_summary.items())[:8]
+        if not top_items:
+            return None, ""
+
+        values = [int(c) for _, c in top_items]
+        labels = [f"S{i}" for i in range(1, len(top_items) + 1)]
+        legend_text = "；".join([f"S{i}={name}" for i, (name, _) in enumerate(top_items, 1)])
+
+        drawing = Drawing(470, 220)
+        chart = VerticalBarChart()
+        chart.x = 45
+        chart.y = 45
+        chart.height = 130
+        chart.width = 390
+        chart.data = [values]
+        chart.strokeColor = colors.HexColor("#6B7C93")
+        chart.valueAxis.valueMin = 0
+        chart.valueAxis.valueMax = max(values) + max(2, int(max(values) * 0.15))
+        chart.valueAxis.valueStep = max(1, int(chart.valueAxis.valueMax / 5))
+        chart.categoryAxis.categoryNames = labels
+        chart.categoryAxis.labels.angle = 0
+        chart.categoryAxis.labels.dy = -10
+        chart.barWidth = 24
+        chart.groupSpacing = 12
+        chart.bars[0].fillColor = colors.HexColor("#4F81BD")
+
+        drawing.add(chart)
+        drawing.add(String(45, 188, "Skills Demand Histogram (Top 8)", fontName="Helvetica", fontSize=9))
+        return drawing, legend_text
+
+    def _build_salary_pie_drawing(self, result: AnalysisResult):
+        """构建薪资分布饼图。"""
+        try:
+            from reportlab.graphics.shapes import Drawing, String
+            from reportlab.graphics.charts.piecharts import Pie
+            from reportlab.lib import colors
+        except Exception:
+            return None
+
+        sal_dist = (result.salary_summary or {}).get("salary_distribution", {}) or {}
+        if not sal_dist:
+            return None
+
+        raw_items = list(sal_dist.items())[:8]
+        raw_items.sort(key=lambda x: int(x[1]), reverse=True)
+        # 切片过多时把尾部小项合并为“其他”，降低标签拥挤。
+        if len(raw_items) > 6:
+            major = raw_items[:5]
+            other_sum = sum(int(v) for _, v in raw_items[5:])
+            raw_items = major + [("其他", other_sum)]
+
+        labels = [str(k) for k, _ in raw_items]
+        values = [int(v) for _, v in raw_items]
+        if not values or sum(values) <= 0:
+            return None
+
+        palette = [
+            colors.HexColor("#5B8FF9"),
+            colors.HexColor("#5AD8A6"),
+            colors.HexColor("#5D7092"),
+            colors.HexColor("#F6BD16"),
+            colors.HexColor("#E8684A"),
+            colors.HexColor("#6DC8EC"),
+            colors.HexColor("#9270CA"),
+            colors.HexColor("#FF9D4D"),
+        ]
+
+        drawing = Drawing(470, 230)
+        pie = Pie()
+        pie.x = 130
+        pie.y = 24
+        pie.width = 190
+        pie.height = 190
+        pie.data = values
+        pie.labels = labels
+        pie.slices.strokeWidth = 0.5
+        # 使用内置简单标签，减少导线和外侧文本重叠。
+        pie.sideLabels = False
+        pie.simpleLabels = True
+        pie.startAngle = 110
+
+        for idx in range(len(values)):
+            pie.slices[idx].fillColor = palette[idx % len(palette)]
+
+        drawing.add(pie)
+        return drawing
+
+    def _build_competency_hexagon_drawing(self, result: AnalysisResult, user_profile: Dict[str, Any]):
+        """构建六边形竞争力图（雷达样式）。"""
+        try:
+            from reportlab.graphics.shapes import Drawing, Line, String, Polygon
+            from reportlab.lib import colors
+        except Exception:
+            return None
+
+        total_jobs = max(1, int(result.total_jobs or 0))
+        skills_n = len(result.skill_summary or {})
+        goals_n = len(user_profile.get("goals", [])) if user_profile else 0
+        strengths_n = len(user_profile.get("strengths", [])) if user_profile else 0
+        concerns_n = len(user_profile.get("concerns", [])) if user_profile else 0
+        exp_summary = result.experience_summary or {}
+        edu_summary = result.education_summary or {}
+
+        # 6 维指标，统一映射到 0-100
+        skill_match = min(100, int(skills_n / 12 * 100))
+        salary_comp = min(100, int((result.salary_summary or {}).get("avg_annual_salary_k", 0) / 300 * 100))
+        exp_fit = min(100, int(sum(exp_summary.values()) / total_jobs * 100))
+        edu_fit = min(100, int(sum(edu_summary.values()) / total_jobs * 100))
+        market_heat = min(100, int(total_jobs / 120 * 100))
+        clarity = min(100, int((goals_n * 20 + strengths_n * 10 - concerns_n * 8) + 40))
+        clarity = max(0, min(100, clarity))
+
+        values = [skill_match, salary_comp, exp_fit, edu_fit, market_heat, clarity]
+        labels = ["Skill", "Salary", "ExpFit", "EduFit", "Heat", "Goal"]
+
+        drawing = Drawing(470, 260)
+        cx, cy, r = 230, 125, 78
+
+        # 背景六边形网格
+        for level in (0.25, 0.5, 0.75, 1.0):
+            pts = []
+            for i in range(6):
+                angle = math.radians(90 - i * 60)
+                x = cx + r * level * math.cos(angle)
+                y = cy + r * level * math.sin(angle)
+                pts.extend([x, y])
+            grid = Polygon(points=pts)
+            grid.fillColor = None
+            grid.strokeColor = colors.HexColor("#D9E2EC")
+            grid.strokeWidth = 0.7
+            drawing.add(grid)
+
+        # 轴线 + 标签
+        for i, label in enumerate(labels):
+            angle = math.radians(90 - i * 60)
+            x = cx + r * math.cos(angle)
+            y = cy + r * math.sin(angle)
+            drawing.add(Line(cx, cy, x, y, strokeColor=colors.HexColor("#BCCCDC"), strokeWidth=0.6))
+            lx = cx + (r + 18) * math.cos(angle)
+            ly = cy + (r + 18) * math.sin(angle)
+            drawing.add(String(lx - 12, ly - 3, label, fontName="Helvetica", fontSize=8))
+
+        # 数据多边形
+        data_pts = []
+        for i, val in enumerate(values):
+            scale = max(0.0, min(1.0, val / 100.0))
+            angle = math.radians(90 - i * 60)
+            x = cx + r * scale * math.cos(angle)
+            y = cy + r * scale * math.sin(angle)
+            data_pts.extend([x, y])
+
+        poly = Polygon(points=data_pts)
+        poly.fillColor = colors.Color(0.24, 0.51, 0.88, alpha=0.30)
+        poly.strokeColor = colors.HexColor("#2F6FB6")
+        poly.strokeWidth = 1.1
+        drawing.add(poly)
+        drawing.add(String(45, 230, "Career Competency Hexagon", fontName="Helvetica", fontSize=9))
+        return drawing
+
     def _extract_advantages_from_ai_insights(self, ai_text: str) -> str:
         """从 AI 洞察文本中提取“已有优势/个人优势”段，避免报告里优势信息被截断。"""
         text = str(ai_text or "")
@@ -599,8 +847,8 @@ new Chart(document.getElementById('eduChart'), {{
         safe = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"<i>\1</i>", safe)
         safe = re.sub(r"(?<!_)_(?!_)(.+?)(?<!_)_(?!_)", r"<i>\1</i>", safe)
 
-        # 行内代码高亮为等宽视觉。
-        safe = re.sub(r"`([^`]+)`", r"<font name='Helvetica'>\1</font>", safe)
+        # 行内代码不切换英文字体，避免中英文混排时字距异常。
+        safe = re.sub(r"`([^`]+)`", r"「\1」", safe)
         return safe
 
     def _sanitize_for_pdf_text(self, text: str) -> str:
