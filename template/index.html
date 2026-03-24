@@ -19,8 +19,10 @@
     <header class="top-bar">
         <div class="brand-chip">ZT-AI CORE</div>
         <div class="top-right">
+            <div class="status" id="top-user-name">账号: -</div>
             <div class="status" id="app-status">系统状态检测中...</div>
-            <button class="ghost-btn" id="open-auth-modal">MCP 登录</button>
+            <button class="ghost-btn" id="top-logout-btn">退出账号</button>
+            <button class="ghost-btn" id="open-mcp-auth-modal">MCP 登录</button>
         </div>
     </header>
 
@@ -42,7 +44,20 @@
             <p>通过自然语言下达任务: 搜索岗位、分析数据、生成报告。</p>
             <button class="module-btn" id="open-chat">进入对话引擎</button>
         </article>
+
+        <article class="module-card" id="card-career">
+            <h2>职业规划</h2>
+            <p>基于已抓取岗位数据，生成人岗匹配、路径规划与行动建议。</p>
+            <button class="module-btn" id="open-career">进入职业规划</button>
+        </article>
+
+        <article class="module-card" id="card-interview">
+            <h2>模拟面试</h2>
+            <p>上传简历后由 AI 担任面试官，围绕目标岗位进行结构化面试与反馈。</p>
+            <button class="module-btn" id="open-interview">进入模拟面试</button>
+        </article>
     </section>
+
 </main>
 
 <section class="panel" id="reports-panel" aria-hidden="true">
@@ -80,6 +95,141 @@
     </div>
 </section>
 
+<section class="panel" id="career-panel" aria-hidden="true">
+    <div class="panel-header">
+        <h3>职业规划引擎</h3>
+        <button class="panel-close" data-close="career-panel">关闭</button>
+    </div>
+    <div class="panel-body career-workbench">
+        <div class="career-zones">
+            <article class="career-zone">
+                <div class="career-zone-head">
+                    <h4>岗位匹配</h4>
+                    <button type="button" class="career-zone-cta" data-zone-open="match">查看详情</button>
+                </div>
+                <div class="career-zone-status" id="career-match-status">等待分析结果...</div>
+            </article>
+            <article class="career-zone">
+                <div class="career-zone-head">
+                    <h4>路径规划</h4>
+                    <button type="button" class="career-zone-cta" data-zone-open="path">查看详情</button>
+                </div>
+                <div class="career-zone-status" id="career-path-status">等待路径规划结果...</div>
+            </article>
+            <article class="career-zone">
+                <div class="career-zone-head">
+                    <h4>职业建议</h4>
+                    <button type="button" class="career-zone-cta" data-zone-open="advice">查看详情</button>
+                </div>
+                <div class="career-zone-status" id="career-advice-status">等待职业建议内容...</div>
+            </article>
+        </div>
+
+        <div class="career-stream-shell" aria-live="polite">
+            <div class="career-stream-head">
+                <span>流式输出</span>
+                <span id="career-stream-state">等待任务开始...</span>
+            </div>
+            <div class="career-stream-body" id="career-stream-body">这里将持续显示报告流式生成内容。</div>
+        </div>
+
+        <div class="career-input-bar">
+            <label for="career-student-text">简历/自我描述</label>
+            <textarea id="career-student-text" rows="4" placeholder="请输入你的简历摘要、项目经历、目标岗位、城市偏好、MBTI/霍兰德（可选）..."></textarea>
+            <div class="career-actions career-actions-wide">
+                <button class="module-btn" id="career-analyze-btn">开始分析</button>
+                <button class="ghost-btn" id="career-export-btn">导出报告</button>
+                <button class="ghost-btn" id="career-upload-btn">上传简历并解析</button>
+                <button class="ghost-btn" id="career-to-reports-btn">查看报告中心</button>
+            </div>
+            <input type="file" id="career-resume-file" accept=".pdf,.doc,.docx" hidden>
+            <div class="career-hint" id="career-hint">提示: 请先通过对话引擎抓取过岗位数据，职业规划会优先使用最新爬虫数据。</div>
+        </div>
+
+        <div class="task-progress career-progress" id="career-task-progress" hidden>
+            <div class="task-progress-head">
+                <span id="career-progress-stage">职业规划准备中...</span>
+                <span id="career-progress-pct">0%</span>
+            </div>
+            <div class="task-progress-track">
+                <div class="task-progress-bar" id="career-progress-bar"></div>
+            </div>
+            <div class="task-progress-msg" id="career-progress-msg"></div>
+        </div>
+
+        <div class="career-zone-modal" id="career-zone-modal" hidden aria-hidden="true">
+            <div class="career-zone-dialog">
+                <div class="career-zone-dialog-head">
+                    <h4 id="career-zone-modal-title">详情</h4>
+                    <button type="button" class="panel-close" id="career-zone-modal-close">关闭</button>
+                </div>
+                <div class="career-zone-dialog-body" id="career-zone-modal-body"></div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="panel" id="interview-panel" aria-hidden="true">
+    <div class="panel-header">
+        <h3>模拟面试引擎</h3>
+        <button class="panel-close" data-close="interview-panel">关闭</button>
+    </div>
+    <div class="panel-body interview-layout">
+        <div class="interview-toolbar">
+            <button class="module-btn" id="interview-start-btn">开始面试</button>
+            <button class="ghost-btn" id="interview-upload-btn">上传简历并解析</button>
+            <input type="file" id="interview-resume-file" accept=".pdf,.doc,.docx" hidden>
+            <div class="interview-meta" id="interview-meta">请先上传简历，然后点击“开始面试”。</div>
+        </div>
+
+        <div class="interview-resume-box">
+            <label for="interview-resume-text">简历文本</label>
+            <textarea id="interview-resume-text" rows="6" placeholder="可直接粘贴简历，或使用上传按钮自动解析..."></textarea>
+        </div>
+
+        <div class="interview-question-box" id="interview-question-box">
+            <div class="interview-question-head">
+                <span id="interview-progress">进度: 0 / 0</span>
+                <span id="interview-depth-flag">普通问题</span>
+            </div>
+            <div class="interview-question-title" id="interview-question-title">等待开始面试...</div>
+            <ul class="interview-sub-list" id="interview-sub-list"></ul>
+        </div>
+
+        <form id="interview-answer-form" class="interview-answer-form">
+            <textarea id="interview-answer-input" rows="5" placeholder="请按小问题逐项回答，确保覆盖完整。"></textarea>
+            <button type="submit" class="module-btn">提交回答</button>
+        </form>
+
+        <div class="interview-log" id="interview-log"></div>
+
+        <div class="interview-feedback" id="interview-feedback" hidden>
+            <h4>面试反馈</h4>
+            <div id="interview-feedback-body"></div>
+        </div>
+    </div>
+</section>
+
+<section class="panel auth-modal" id="account-auth-modal" aria-hidden="true">
+    <div class="panel-header">
+        <h3>账户系统</h3>
+        <button class="panel-close" id="close-account-modal">关闭</button>
+    </div>
+    <div class="panel-body auth-layout">
+        <div class="auth-state" id="account-state-text">请先登录账号后使用系统。</div>
+        <div class="auth-fields">
+            <input id="account-username" type="text" placeholder="用户名（3-32位，字母数字下划线）">
+            <input id="account-password" type="password" placeholder="密码（至少6位）">
+        </div>
+        <div class="auth-actions">
+            <button type="button" class="module-btn" id="account-login-btn">登录</button>
+            <button type="button" class="ghost-btn" id="account-register-btn">注册</button>
+            <button type="button" class="ghost-btn" id="account-logout-btn">退出登录</button>
+        </div>
+        <div class="auth-hint" id="account-hint-text">登录后，系统会自动按账号隔离输出结果文件。</div>
+    </div>
+</section>
+
 <section class="panel auth-modal" id="mcp-auth-modal" aria-hidden="true">
     <div class="panel-header">
         <h3>MCP 扫码登录</h3>
@@ -99,6 +249,8 @@
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/markdown-it@14.1.0/dist/markdown-it.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
 </html>

@@ -13,23 +13,55 @@ import json
 import importlib
 import os
 import re
+import shutil
 import time
 import threading
 import uuid
 import base64
+import sqlite3
+import hashlib
+import hmac
+import secrets
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List
 
 import requests
-from flask import Flask, jsonify, render_template, request, send_file, Response
+from flask import Flask, jsonify, render_template, request, send_file, Response, stream_with_context, session
 
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad
 from Crypto.Random import get_random_bytes
 
 from src.analyzer import JobAnalyzer
+from src.career_job_store import schedule_upsert_jobs_to_sqlite
+from src.career_planning.ai.ai_planner import generate_ai_matching_and_paths
+from src.career_planning.data.data_loader import load_jobs_dataframe
+from src.career_planning.dialogue.dialogue_manager import (
+    build_final_student_text,
+    default_state,
+    next_dialogue_turn,
+)
+from src.career_planning.ai.llm_client import LLMClient as CareerLLMClient
+from src.career_planning.matching.matcher import match_jobs
+from src.career_planning.matching.profiles import (
+    build_job_profiles,
+    build_related_edges,
+    build_transition_graph,
+    build_vertical_graph,
+)
+from src.career_planning.reports.report_generator import (
+    export_report as export_career_report,
+    generate_report_markdown,
+    stream_report_markdown,
+)
+from src.career_planning.resume.resume_parser import parse_resume_file
 from src.config import Config
+from src.interview_module import (
+    build_interview_feedback,
+    build_interview_questions,
+    evaluate_answer_completeness,
+)
 from src.models import CITY_CODES, SearchQuery
 from src.report import ReportGenerator
 from src.scraper import BossZhipinScraper
@@ -38,11 +70,15 @@ from src.boss_zp.cookie_utils import save_cookie_to_config
 BASE_DIR = Path(__file__).resolve().parent
 
 app = Flask(__name__, template_folder="template", static_folder="static")
+app.config["SECRET_KEY"] = os.environ.get("CAREERAI_SECRET_KEY", "careerai-dev-secret-change-me")
 
 TASK_LOCK = threading.Lock()
 CHAT_TASKS: Dict[str, Dict[str, Any]] = {}
 MCP_LOGIN_LOCK = threading.Lock()
 MCP_LOGIN_TASKS: Dict[str, Dict[str, Any]] = {}
+INTERVIEW_LOCK = threading.Lock()
+INTERVIEW_SESSIONS: Dict[str, Dict[str, Any]] = {}
+AUTH_LOCK = threading.Lock()
 
 
 @dataclass
@@ -62,6 +98,133 @@ def _safe_int(value: Any, default: int) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _users_db_path() -> Path:
+    cfg = Config.load()
+    data_dir = BASE_DIR / cfg.data_dir
+    data_dir.mkdir(parents=True, exist_ok=True)
+    return data_dir / "users.db"
+
+
+def _ensure_user_table() -> None:
+    db_path = _users_db_path()
+    with AUTH_LOCK:
+        conn = sqlite3.connect(str(db_path))
+        try:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT NOT NULL UNIQUE,
+                    password_salt TEXT NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    created_at INTEGER NOT NULL
+                )
+                """
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def _normalize_username(username: str) -> str:
+    return re.sub(r"\s+", "", str(username or "").strip().lower())
+
+
+def _hash_password(password: str, salt_hex: str) -> str:
+    salt = bytes.fromhex(salt_hex)
+    digest = hashlib.pbkdf2_hmac("sha256", str(password or "").encode("utf-8"), salt, 120_000)
+    return digest.hex()
+
+
+def _create_user(username: str, password: str) -> tuple[bool, str]:
+    name = _normalize_username(username)
+    if not re.fullmatch(r"[a-z0-9_]{3,32}", name):
+        return False, "用户名仅支持 3-32 位字母、数字、下划线。"
+    if len(str(password or "")) < 6:
+        return False, "密码长度至少 6 位。"
+
+    _ensure_user_table()
+    db_path = _users_db_path()
+
+    with AUTH_LOCK:
+        conn = sqlite3.connect(str(db_path))
+        try:
+            cur = conn.execute("SELECT id FROM users WHERE username = ?", (name,))
+            if cur.fetchone():
+                return False, "账号已存在，请更换用户名。"
+
+            salt_hex = secrets.token_hex(16)
+            password_hash = _hash_password(password, salt_hex)
+            conn.execute(
+                "INSERT INTO users(username, password_salt, password_hash, created_at) VALUES (?, ?, ?, ?)",
+                (name, salt_hex, password_hash, int(time.time())),
+            )
+            conn.commit()
+            return True, "注册成功"
+        finally:
+            conn.close()
+
+
+def _verify_user(username: str, password: str) -> Dict[str, Any] | None:
+    name = _normalize_username(username)
+    _ensure_user_table()
+    db_path = _users_db_path()
+
+    with AUTH_LOCK:
+        conn = sqlite3.connect(str(db_path))
+        try:
+            cur = conn.execute(
+                "SELECT id, username, password_salt, password_hash FROM users WHERE username = ?",
+                (name,),
+            )
+            row = cur.fetchone()
+        finally:
+            conn.close()
+
+    if not row:
+        return None
+
+    user_id, username_db, salt_hex, hash_hex = row
+    calc = _hash_password(password, str(salt_hex))
+    if not hmac.compare_digest(calc, str(hash_hex)):
+        return None
+
+    return {"id": int(user_id), "username": str(username_db)}
+
+
+def _current_user() -> Dict[str, Any] | None:
+    uid = session.get("user_id")
+    uname = session.get("username")
+    if not uid or not uname:
+        return None
+    return {"id": int(uid), "username": str(uname)}
+
+
+def _user_dir_token(user: Dict[str, Any]) -> str:
+    seed = f"uid:{int(user.get('id') or 0)}"
+    return hashlib.sha256(seed.encode("utf-8")).hexdigest()[:20]
+
+
+def _get_user_output_dir(user: Dict[str, Any] | None = None) -> Path:
+    cfg = Config.load()
+    root = BASE_DIR / cfg.output_dir / "users"
+    root.mkdir(parents=True, exist_ok=True)
+    u = user or _current_user()
+    if not u:
+        return root / "_guest"
+    token = _user_dir_token(u)
+    user_dir = root / token
+    user_dir.mkdir(parents=True, exist_ok=True)
+    return user_dir
+
+
+def _require_login() -> tuple[Dict[str, Any] | None, Any | None]:
+    user = _current_user()
+    if not user:
+        return None, (jsonify({"ok": False, "message": "请先登录账号。"}), 401)
+    return user, None
 
 
 def _extract_json_block(text: str) -> Dict[str, Any]:
@@ -111,13 +274,14 @@ def _build_chat_completions_url(base_url: str) -> str:
     return f"{url}/chat/completions"
 
 
-def _collect_report_files() -> List[Dict[str, Any]]:
-    cfg = Config.load()
-    output_dir = BASE_DIR / cfg.output_dir
+def _collect_report_files(user: Dict[str, Any] | None = None) -> List[Dict[str, Any]]:
+    output_dir = _get_user_output_dir(user)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     items: List[Dict[str, Any]] = []
-    for file_path in output_dir.glob("report_*"):
+    for file_path in output_dir.glob("*"):
+        if not file_path.is_file():
+            continue
         if file_path.suffix.lower() not in {".md", ".html", ".pdf"}:
             continue
         stat = file_path.stat()
@@ -145,6 +309,54 @@ def _render_markdown_to_html(content: str) -> str:
         content,
         extensions=["fenced_code", "tables", "sane_lists", "nl2br"],
     )
+
+
+def _get_career_data_dir() -> Path:
+    cfg = Config.load()
+    return BASE_DIR / cfg.data_dir
+
+
+def _get_career_output_dir() -> Path:
+    return _get_user_output_dir()
+
+
+def _build_career_llm_client() -> CareerLLMClient:
+    cfg = Config.load()
+
+    api_key = str(cfg.ai_api_key or "").strip()
+    base_url = str(cfg.ai_base_url or "").strip()
+    model = str(cfg.ai_model or "").strip()
+
+    if not api_key and cfg.backup_ai_api_key:
+        api_key = str(cfg.backup_ai_api_key or "").strip()
+        base_url = str(cfg.backup_ai_base_url or "").strip()
+        model = str(cfg.backup_ai_model or "").strip()
+
+    return CareerLLMClient(api_key=api_key, base_url=base_url, model=model)
+
+
+def _career_recommend_jobs_for_dialogue(student_text: str) -> list[str]:
+    text = str(student_text or "").strip()
+    if not text:
+        return []
+
+    try:
+        jobs_df, _ = load_jobs_dataframe(_get_career_data_dir())
+        job_profiles = build_job_profiles(jobs_df)
+        llm = _build_career_llm_client()
+        from src.career_planning.matching.student_profile import build_student_profile
+
+        student_profile = build_student_profile(text, llm=llm)
+        ai_bundle = generate_ai_matching_and_paths(
+            student_profile=student_profile,
+            job_profiles=job_profiles,
+            llm_client=llm,
+            top_k=8,
+        )
+        matches = ai_bundle.get("matches") or match_jobs(student_profile, job_profiles, top_k=8)
+        return [m.get("job_title", "") for m in matches if m.get("job_title")]
+    except Exception:
+        return []
 
 
 def _ask_llm_for_intent(config: Config, message: str) -> ChatIntent | None:
@@ -439,6 +651,19 @@ def _profile_summary_text(profile: Dict[str, Any]) -> str:
     return " | ".join(parts) if parts else "已提取到个人经历信息。"
 
 
+def _persist_career_jobs_dataset(source_path: str) -> str:
+    source = Path(str(source_path or "")).resolve()
+    if not source.exists() or not source.is_file():
+        return ""
+
+    cfg = Config.load()
+    data_dir = BASE_DIR / cfg.data_dir
+    data_dir.mkdir(parents=True, exist_ok=True)
+    target = data_dir / "career_jobs_latest.json"
+    shutil.copyfile(source, target)
+    return str(target)
+
+
 def _new_task_record(message: str) -> str:
     task_id = uuid.uuid4().hex
     with TASK_LOCK:
@@ -453,6 +678,7 @@ def _new_task_record(message: str) -> str:
             "result": None,
             "events": [],
             "next_event_id": 1,
+            "owner_user_id": int(session.get("user_id") or 0),
         }
     return task_id
 
@@ -733,6 +959,7 @@ def _add_task_event(task_id: str, text: str, kind: str = "bot") -> None:
 
 def _run_pipeline(
     message: str,
+    user: Dict[str, Any] | None = None,
     progress_cb: Callable[[int, str, str], None] | None = None,
     event_cb: Callable[[str, str], None] | None = None,
 ) -> Dict[str, Any]:
@@ -745,6 +972,8 @@ def _run_pipeline(
             event_cb(text, kind)
 
     config = Config.load()
+    user_output_dir = _get_user_output_dir(user)
+    config.output_dir = str(user_output_dir)
     if not config.cookie:
         return {
             "ok": False,
@@ -783,7 +1012,7 @@ def _run_pipeline(
     reporter = ReportGenerator(config)
 
     step(16, "prepare", "正在准备抓取任务，过程可能需要几十秒...")
-    report_snapshot = {x["name"] for x in _collect_report_files()}
+    report_snapshot = {x["name"] for x in _collect_report_files(user)}
 
     def on_scrape_progress(done_pages: int, total_pages: int, job_count: int) -> None:
         total_pages = max(total_pages, 1)
@@ -832,6 +1061,22 @@ def _run_pipeline(
     data_path = scraper.save_jobs(jobs)
     emit(f"原始数据已保存: {os.path.basename(data_path)}")
 
+    try:
+        cfg = Config.load()
+        data_dir = BASE_DIR / cfg.data_dir
+        schedule_upsert_jobs_to_sqlite([job.to_dict() for job in jobs], data_dir)
+        emit("后台任务已启动: 爬取职位将与 SQLite 历史数据比对去重后入库，不影响当前前台流程。")
+    except Exception as store_err:
+        emit(f"后台SQLite入库启动失败(不影响当前流程): {store_err}", kind="error")
+
+    career_data_path = ""
+    try:
+        career_data_path = _persist_career_jobs_dataset(data_path)
+        if career_data_path:
+            emit(f"职业规划数据已更新: {os.path.basename(career_data_path)}")
+    except Exception as copy_err:
+        emit(f"职业规划数据同步失败(不影响主流程): {copy_err}", kind="error")
+
     data_destroyed = False
     result_payload: Dict[str, Any] | None = None
     try:
@@ -857,7 +1102,7 @@ def _run_pipeline(
         reporter.generate_pdf(analysis, jobs, save=True, progress_callback=on_report_progress)
         step(99, "finalizing", "报告生成完毕，正在整理结果...")
 
-        report_after = _collect_report_files()
+        report_after = _collect_report_files(user)
         new_reports = [x for x in report_after if x["name"] not in report_snapshot]
         latest_report = (new_reports[0]["name"] if new_reports else report_after[0]["name"])
 
@@ -884,6 +1129,7 @@ def _run_pipeline(
             "user_profile": user_profile,
             "user_profile_summary": _profile_summary_text(user_profile),
             "data_file": os.path.basename(data_path),
+            "career_data_file": os.path.basename(career_data_path) if career_data_path else "",
             "data_destroyed": data_destroyed,
             "report_file": latest_report,
         }
@@ -916,8 +1162,14 @@ def _run_pipeline_task(task_id: str, message: str) -> None:
     def event_cb(text: str, kind: str = "bot") -> None:
         _add_task_event(task_id, text, kind=kind)
 
+    owner: Dict[str, Any] | None = None
+    task = _get_task(task_id)
+    owner_uid = int((task or {}).get("owner_user_id") or 0)
+    if owner_uid:
+        owner = {"id": owner_uid, "username": ""}
+
     try:
-        result = _run_pipeline(message, progress_cb=progress_cb, event_cb=event_cb)
+        result = _run_pipeline(message, user=owner, progress_cb=progress_cb, event_cb=event_cb)
 
         should_retry = not result.get("ok") and bool(result.get("should_retry"))
         if should_retry:
@@ -929,7 +1181,7 @@ def _run_pipeline_task(task_id: str, message: str) -> None:
                 stage="retry.wind-control",
                 message="检测到首次抓取疑似触发风控，系统将按你的原始输入完整重跑一次流程。由于风控原因，本次总耗时会更长，请耐心等待。",
             )
-            retry_result = _run_pipeline(message, progress_cb=progress_cb, event_cb=event_cb)
+            retry_result = _run_pipeline(message, user=owner, progress_cb=progress_cb, event_cb=event_cb)
             if retry_result.get("ok"):
                 retry_result["retried_due_to_wind_control"] = True
                 result = retry_result
@@ -973,15 +1225,67 @@ def _run_pipeline_task(task_id: str, message: str) -> None:
 
 @app.get("/")
 def index():
+    if not _current_user():
+        return render_template("login.html")
     return render_template("index.html")
+
+
+@app.get("/login")
+def login_page():
+    if _current_user():
+        return render_template("index.html")
+    return render_template("login.html")
+
+
+@app.post("/api/auth/register")
+def api_auth_register():
+    payload = request.get_json(silent=True) or {}
+    username = str(payload.get("username", "")).strip()
+    password = str(payload.get("password", ""))
+    ok, message = _create_user(username, password)
+    if not ok:
+        return jsonify({"ok": False, "message": message}), 400
+    return jsonify({"ok": True, "message": message})
+
+
+@app.post("/api/auth/login")
+def api_auth_login():
+    payload = request.get_json(silent=True) or {}
+    username = str(payload.get("username", "")).strip()
+    password = str(payload.get("password", ""))
+    user = _verify_user(username, password)
+    if not user:
+        return jsonify({"ok": False, "message": "用户名或密码错误。"}), 400
+
+    session["user_id"] = int(user["id"])
+    session["username"] = str(user["username"])
+    return jsonify({"ok": True, "message": "登录成功", "user": user})
+
+
+@app.post("/api/auth/logout")
+def api_auth_logout():
+    session.pop("user_id", None)
+    session.pop("username", None)
+    return jsonify({"ok": True, "message": "已退出登录"})
+
+
+@app.get("/api/auth/me")
+def api_auth_me():
+    user = _current_user()
+    if not user:
+        return jsonify({"ok": True, "logged_in": False})
+    return jsonify({"ok": True, "logged_in": True, "user": user})
 
 
 @app.get("/api/status")
 def api_status():
     cfg = Config.load()
+    user = _current_user()
     return jsonify(
         {
             "ok": True,
+            "logged_in": bool(user),
+            "username": (user or {}).get("username", ""),
             "has_cookie": bool(cfg.cookie),
             "ai_configured": bool(cfg.ai_api_key),
             "ai_model": cfg.ai_model,
@@ -991,13 +1295,19 @@ def api_status():
 
 @app.get("/api/reports")
 def api_reports():
-    return jsonify({"ok": True, "reports": _collect_report_files()})
+    user, err = _require_login()
+    if err:
+        return err
+    return jsonify({"ok": True, "reports": _collect_report_files(user)})
 
 
 @app.get("/api/reports/<path:report_name>")
 def api_report_content(report_name: str):
-    cfg = Config.load()
-    output_dir = (BASE_DIR / cfg.output_dir).resolve()
+    user, err = _require_login()
+    if err:
+        return err
+
+    output_dir = _get_user_output_dir(user).resolve()
     target = (output_dir / report_name).resolve()
 
     if output_dir not in target.parents or not target.exists():
@@ -1033,8 +1343,11 @@ def api_report_content(report_name: str):
 
 @app.get("/api/reports/<path:report_name>/raw")
 def api_report_raw(report_name: str):
-    cfg = Config.load()
-    output_dir = (BASE_DIR / cfg.output_dir).resolve()
+    user, err = _require_login()
+    if err:
+        return err
+
+    output_dir = _get_user_output_dir(user).resolve()
     target = (output_dir / report_name).resolve()
 
     if output_dir not in target.parents or not target.exists():
@@ -1045,6 +1358,10 @@ def api_report_raw(report_name: str):
 
 @app.post("/api/chat")
 def api_chat():
+    user, err = _require_login()
+    if err:
+        return err
+
     payload = request.get_json(silent=True) or {}
     message = str(payload.get("message", "")).strip()
     if not message:
@@ -1059,9 +1376,15 @@ def api_chat():
 
 @app.get("/api/chat/task/<task_id>")
 def api_chat_task(task_id: str):
+    user, err = _require_login()
+    if err:
+        return err
+
     task = _get_task(task_id)
     if not task:
         return jsonify({"ok": False, "message": "任务不存在"}), 404
+    if int(task.get("owner_user_id") or 0) != int(user.get("id") or 0):
+        return jsonify({"ok": False, "message": "无权访问该任务"}), 403
     return jsonify({"ok": True, "task": task})
 
 
@@ -1155,6 +1478,541 @@ def api_boss_mcp_login_qr(task_id: str):
 </html>
 """
     return Response(html, mimetype="text/html; charset=utf-8")
+
+
+@app.get("/api/career/health")
+def api_career_health():
+    _, err = _require_login()
+    if err:
+        return err
+
+    llm = _build_career_llm_client()
+    return jsonify(
+        {
+            "ok": True,
+            "time": int(time.time()),
+            "llm_enabled": llm.enabled,
+            "data_dir": str(_get_career_data_dir().name),
+        }
+    )
+
+
+@app.post("/api/career/analyze")
+def api_career_analyze():
+    _, err = _require_login()
+    if err:
+        return err
+
+    print("[DEBUG] 进入 /api/career/analyze")
+    try:
+        payload: Dict[str, Any] = request.get_json(silent=True) or {}
+        student_text = str(payload.get("student_text", "")).strip()
+        print(f"[DEBUG] 收到 student_text 长度: {len(student_text)}")
+        include_report = bool(payload.get("include_report", False))
+
+        if not student_text:
+            return jsonify({"ok": False, "error": "请先输入简历或自我描述文本。"}), 400
+
+        try:
+            jobs_df, dataset_path = load_jobs_dataframe(_get_career_data_dir())
+        except Exception as exc:
+            return jsonify({"ok": False, "error": f"读取岗位数据失败: {exc}"}), 500
+
+        llm = _build_career_llm_client()
+        from src.career_planning.matching.student_profile import build_student_profile
+
+        job_profiles = build_job_profiles(jobs_df)
+        relation_edges = build_related_edges(job_profiles)
+
+        student_profile = build_student_profile(student_text, llm=llm)
+        ai_bundle = generate_ai_matching_and_paths(
+            student_profile=student_profile,
+            job_profiles=job_profiles,
+            llm_client=llm,
+            top_k=8,
+        )
+
+        matches = ai_bundle.get("matches") or match_jobs(student_profile, job_profiles, top_k=8)
+        vertical_graph = ai_bundle.get("vertical_graph") or build_vertical_graph(job_profiles)
+        transition_graph = ai_bundle.get("transition_graph") or build_transition_graph()
+
+        report_md = ""
+        if include_report:
+            report_md = generate_report_markdown(
+                student_profile=student_profile,
+                matches=matches,
+                vertical_graph=vertical_graph,
+                transition_graph=transition_graph,
+                llm_client=llm,
+            )
+
+        return jsonify(
+            {
+                "ok": True,
+                "dataset": {
+                    "path": dataset_path.name,
+                    "job_count": int(len(jobs_df)),
+                    "unique_roles": int(len(job_profiles)),
+                    "title_categories": int(jobs_df["job_title"].nunique()),
+                },
+                "job_profiles": job_profiles,
+                "vertical_graph": vertical_graph,
+                "transition_graph": transition_graph,
+                "relation_edges": relation_edges,
+                "student_profile": student_profile,
+                "matches": matches,
+                "report_markdown": report_md,
+                "report_ready": bool(report_md),
+                "metrics": {
+                    "required_job_profiles": len(job_profiles) >= 10,
+                    "required_transition_paths": len(transition_graph) >= 5
+                    and all(len(x.get("transitions", [])) >= 2 for x in transition_graph),
+                    "matching_dimensions": [
+                        "foundation_requirements",
+                        "professional_skills",
+                        "professional_quality",
+                        "development_potential",
+                    ],
+                },
+            }
+        )
+    except Exception as e:
+        import traceback
+        print("[ERROR] analyze 崩溃:", str(e))
+        print(traceback.format_exc())  # ← 加这一行，打印完整栈
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@app.post("/api/career/report")
+def api_career_report():
+    _, err = _require_login()
+    if err:
+        return err
+
+    payload: Dict[str, Any] = request.get_json(silent=True) or {}
+    student_profile = payload.get("student_profile") or {}
+    matches = payload.get("matches") or []
+    vertical_graph = payload.get("vertical_graph") or []
+    transition_graph = payload.get("transition_graph") or []
+
+    if not student_profile or not matches:
+        return jsonify({"ok": False, "error": "报告生成缺少必要的分析结果。"}), 400
+
+    llm = _build_career_llm_client()
+    report_md = generate_report_markdown(
+        student_profile=student_profile,
+        matches=matches,
+        vertical_graph=vertical_graph,
+        transition_graph=transition_graph,
+        llm_client=llm,
+    )
+    return jsonify({"ok": True, "report_markdown": report_md})
+
+
+@app.post("/api/career/report/stream")
+def api_career_report_stream():
+    _, err = _require_login()
+    if err:
+        return err
+
+    payload: Dict[str, Any] = request.get_json(silent=True) or {}
+    student_profile = payload.get("student_profile") or {}
+    matches = payload.get("matches") or []
+    vertical_graph = payload.get("vertical_graph") or []
+    transition_graph = payload.get("transition_graph") or []
+    auto_export = bool(payload.get("auto_export", False))
+    report_name = str(payload.get("report_name", "")).strip()
+
+    if not student_profile or not matches:
+        def error_stream():
+            # Send an SSE prelude to reduce buffering in some proxies/browsers.
+            yield f": {' ' * 2048}\n\n"
+            err_event = {
+                "type": "error",
+                "message": "报告流式输出缺少必要的分析结果。请先完成分析并确保 student_profile 与 matches 非空。",
+            }
+            yield f"data: {json.dumps(err_event, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'mode': 'error', 'final': True}, ensure_ascii=False)}\n\n"
+
+        return Response(
+            stream_with_context(error_stream()),
+            mimetype="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache, no-transform",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    llm = _build_career_llm_client()
+
+    def event_stream():
+        assembled_parts: List[str] = []
+        try:
+            # Send an SSE prelude to reduce buffering in some proxies/browsers.
+            yield f": {' ' * 2048}\n\n"
+            yield f"data: {json.dumps({'type': 'stage', 'message': '已建立流式通道，开始连续输出'}, ensure_ascii=False)}\n\n"
+            for event in stream_report_markdown(
+                student_profile=student_profile,
+                matches=matches,
+                vertical_graph=vertical_graph,
+                transition_graph=transition_graph,
+                llm_client=llm,
+            ):
+                if str(event.get("type", "")) == "chunk":
+                    assembled_parts.append(str(event.get("content", "")))
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+            if auto_export:
+                markdown_text = "".join(assembled_parts).strip()
+                if markdown_text:
+                    stem = report_name or f"career_plan_{int(time.time() * 1000)}"
+                    try:
+                        files = export_career_report(markdown_text, _get_career_output_dir(), stem)
+                        default_file = files.get("pdf") or ""
+                        if default_file:
+                            saved_event = {
+                                "type": "saved",
+                                "files": files,
+                                "default_file": default_file,
+                            }
+                            yield f"data: {json.dumps(saved_event, ensure_ascii=False)}\n\n"
+                        else:
+                            warn_event = {
+                                "type": "warn",
+                                "message": f"报告文本已生成，但 PDF 导出失败: {files.get('pdf_error', '未知错误')}",
+                            }
+                            yield f"data: {json.dumps(warn_event, ensure_ascii=False)}\n\n"
+                    except Exception as exc:
+                        warn_event = {
+                            "type": "warn",
+                            "message": f"已生成报告内容，但自动保存失败: {exc}",
+                        }
+                        yield f"data: {json.dumps(warn_event, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'mode': 'stream', 'final': True}, ensure_ascii=False)}\n\n"
+        except Exception as exc:
+            err = {"type": "error", "message": f"流式生成失败: {exc}"}
+            yield f"data: {json.dumps(err, ensure_ascii=False)}\n\n"
+
+    return Response(
+        stream_with_context(event_stream()),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.post("/api/career/export")
+def api_career_export():
+    _, err = _require_login()
+    if err:
+        return err
+
+    payload: Dict[str, Any] = request.get_json(silent=True) or {}
+    markdown_text = str(payload.get("report_markdown", "")).strip()
+    report_name = str(payload.get("report_name", "career_report")).strip()
+
+    if not markdown_text:
+        return jsonify({"ok": False, "error": "没有可导出的报告内容。"}), 400
+
+    files = export_career_report(markdown_text, _get_career_output_dir(), report_name)
+    default_file = files.get("pdf") or ""
+    warning = files.get("pdf_error", "")
+    if not default_file:
+        return jsonify({"ok": False, "error": warning or "PDF 导出失败"}), 500
+    return jsonify({"ok": True, "files": files, "default_file": default_file, "warning": warning})
+
+
+@app.post("/api/career/resume/parse")
+def api_career_resume_parse():
+    _, err = _require_login()
+    if err:
+        return err
+
+    file = request.files.get("file")
+    if not file:
+        return jsonify({"ok": False, "error": "请先选择要上传的简历文件。"}), 400
+
+    filename = str(file.filename or "").strip()
+    if not filename:
+        return jsonify({"ok": False, "error": "无效的文件名。"}), 400
+
+    raw = file.read()
+    if not raw:
+        return jsonify({"ok": False, "error": "上传文件为空。"}), 400
+    if len(raw) > 8 * 1024 * 1024:
+        return jsonify({"ok": False, "error": "文件过大，请上传 8MB 以内的简历文件。"}), 400
+
+    try:
+        text = parse_resume_file(filename, raw)
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"简历解析失败: {exc}"}), 400
+
+    if not text:
+        return jsonify({"ok": False, "error": "未从文件中提取到文本，请检查文件内容。"}), 400
+
+    return jsonify({"ok": True, "filename": filename, "text": text})
+
+
+@app.post("/api/interview/resume/parse")
+def api_interview_resume_parse():
+    _, err = _require_login()
+    if err:
+        return err
+
+    file = request.files.get("file")
+    if not file:
+        return jsonify({"ok": False, "error": "请先选择要上传的简历文件。"}), 400
+
+    filename = str(file.filename or "").strip()
+    if not filename:
+        return jsonify({"ok": False, "error": "无效的文件名。"}), 400
+
+    raw = file.read()
+    if not raw:
+        return jsonify({"ok": False, "error": "上传文件为空。"}), 400
+    if len(raw) > 8 * 1024 * 1024:
+        return jsonify({"ok": False, "error": "文件过大，请上传 8MB 以内的简历文件。"}), 400
+
+    try:
+        text = parse_resume_file(filename, raw)
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"简历解析失败: {exc}"}), 400
+
+    if not text:
+        return jsonify({"ok": False, "error": "未从文件中提取到文本，请检查文件内容。"}), 400
+
+    return jsonify({"ok": True, "filename": filename, "text": text})
+
+
+@app.post("/api/interview/start")
+def api_interview_start():
+    _, err = _require_login()
+    if err:
+        return err
+
+    payload: Dict[str, Any] = request.get_json(silent=True) or {}
+    resume_text = str(payload.get("resume_text", "")).strip()
+    question_count = max(8, min(15, _safe_int(payload.get("question_count"), 10)))
+
+    if not resume_text:
+        return jsonify({"ok": False, "error": "请先上传并解析简历，或直接粘贴简历文本。"}), 400
+
+    llm = _build_career_llm_client()
+    target_role, questions = build_interview_questions(
+        resume_text=resume_text,
+        llm_client=llm,
+        target_count=question_count,
+    )
+    if not questions:
+        return jsonify({"ok": False, "error": "未能生成面试问题，请稍后重试。"}), 500
+
+    session_id = uuid.uuid4().hex
+    session = {
+        "session_id": session_id,
+        "created_at": int(time.time()),
+        "target_role": target_role,
+        "resume_text": resume_text[:12000],
+        "questions": questions,
+        "current_index": 0,
+        "attempts": {},
+        "records": [],
+        "status": "running",
+    }
+    with INTERVIEW_LOCK:
+        INTERVIEW_SESSIONS[session_id] = session
+
+    current_question = questions[0]
+    return jsonify(
+        {
+            "ok": True,
+            "session_id": session_id,
+            "target_role": target_role,
+            "total_questions": len(questions),
+            "deep_questions": sum(1 for q in questions if q.get("is_deep")),
+            "current": {
+                "index": 1,
+                "question_id": current_question.get("id", 1),
+                "question": current_question.get("question", ""),
+                "sub_questions": current_question.get("sub_questions", []),
+                "is_deep": bool(current_question.get("is_deep")),
+                "category": current_question.get("category", ""),
+            },
+        }
+    )
+
+
+@app.post("/api/interview/answer")
+def api_interview_answer():
+    _, err = _require_login()
+    if err:
+        return err
+
+    payload: Dict[str, Any] = request.get_json(silent=True) or {}
+    session_id = str(payload.get("session_id", "")).strip()
+    answer = str(payload.get("answer", "")).strip()
+
+    if not session_id:
+        return jsonify({"ok": False, "error": "缺少 session_id。"}), 400
+    if not answer:
+        return jsonify({"ok": False, "error": "请输入你的回答后再提交。"}), 400
+
+    with INTERVIEW_LOCK:
+        session = INTERVIEW_SESSIONS.get(session_id)
+    if not session:
+        return jsonify({"ok": False, "error": "面试会话不存在或已过期，请重新开始。"}), 404
+
+    if session.get("status") != "running":
+        return jsonify({"ok": False, "error": "该面试会话已结束，请重新开始。"}), 400
+
+    questions = session.get("questions") or []
+    current_index = int(session.get("current_index", 0))
+    if current_index >= len(questions):
+        return jsonify({"ok": False, "error": "当前面试已结束。"}), 400
+
+    current_question = questions[current_index]
+    llm = _build_career_llm_client()
+    evaluation = evaluate_answer_completeness(llm_client=llm, question=current_question, answer=answer)
+
+    status = str(evaluation.get("status", "incomplete"))
+    missing_indices = evaluation.get("missing_sub_questions") if isinstance(evaluation.get("missing_sub_questions"), list) else []
+    missing_indices = [int(x) for x in missing_indices if isinstance(x, (int, float))]
+    sub_questions = current_question.get("sub_questions") if isinstance(current_question.get("sub_questions"), list) else []
+    missing_sub_questions = [sub_questions[i] for i in missing_indices if 0 <= i < len(sub_questions)]
+
+    attempts = session.get("attempts") if isinstance(session.get("attempts"), dict) else {}
+    qid = str(current_question.get("id", current_index + 1))
+    attempts[qid] = int(attempts.get(qid, 0)) + 1
+    session["attempts"] = attempts
+
+    record = {
+        "question_id": current_question.get("id", current_index + 1),
+        "question": current_question.get("question", ""),
+        "sub_questions": sub_questions,
+        "is_deep": bool(current_question.get("is_deep")),
+        "answer": answer,
+        "status": "complete" if status == "complete" else "incomplete",
+        "missing_sub_questions": missing_sub_questions,
+        "quality_score": int(evaluation.get("quality_score", 0) or 0),
+        "comment": str(evaluation.get("comment", "")).strip(),
+        "attempt": attempts[qid],
+    }
+
+    # 同一题最多允许 2 次补充，防止无限卡住。
+    if status != "complete" and attempts[qid] < 3:
+        session["records"].append(record)
+        with INTERVIEW_LOCK:
+            INTERVIEW_SESSIONS[session_id] = session
+        return jsonify(
+            {
+                "ok": True,
+                "status": "needs_completion",
+                "message": "当前回答未覆盖全部小问题，请先补充后再进入下一题。",
+                "evaluation": record,
+                "current": {
+                    "index": current_index + 1,
+                    "question_id": current_question.get("id", current_index + 1),
+                    "question": current_question.get("question", ""),
+                    "sub_questions": sub_questions,
+                    "is_deep": bool(current_question.get("is_deep")),
+                    "category": current_question.get("category", ""),
+                },
+            }
+        )
+
+    session["records"].append(record)
+    session["current_index"] = current_index + 1
+
+    if session["current_index"] < len(questions):
+        next_q = questions[session["current_index"]]
+        with INTERVIEW_LOCK:
+            INTERVIEW_SESSIONS[session_id] = session
+        return jsonify(
+            {
+                "ok": True,
+                "status": "next_question",
+                "message": "继续下一题。",
+                "evaluation": record,
+                "current": {
+                    "index": session["current_index"] + 1,
+                    "question_id": next_q.get("id", session["current_index"] + 1),
+                    "question": next_q.get("question", ""),
+                    "sub_questions": next_q.get("sub_questions", []),
+                    "is_deep": bool(next_q.get("is_deep")),
+                    "category": next_q.get("category", ""),
+                },
+                "progress": {
+                    "answered": session["current_index"],
+                    "total": len(questions),
+                },
+            }
+        )
+
+    session["status"] = "done"
+    feedback = build_interview_feedback(
+        llm_client=llm,
+        target_role=str(session.get("target_role", "目标岗位")),
+        questions=questions,
+        records=session.get("records") or [],
+    )
+    session["feedback"] = feedback
+    with INTERVIEW_LOCK:
+        INTERVIEW_SESSIONS[session_id] = session
+
+    return jsonify(
+        {
+            "ok": True,
+            "status": "finished",
+            "message": "模拟面试已完成，已生成反馈。",
+            "evaluation": record,
+            "feedback": feedback,
+            "progress": {
+                "answered": len(questions),
+                "total": len(questions),
+            },
+        }
+    )
+
+
+@app.post("/api/career/dialogue/start")
+def api_career_dialogue_start():
+    _, err = _require_login()
+    if err:
+        return err
+
+    llm = _build_career_llm_client()
+    turn = next_dialogue_turn(
+        state=default_state(),
+        user_message="",
+        llm_client=llm,
+        recommend_jobs=_career_recommend_jobs_for_dialogue,
+    )
+    return jsonify({"ok": True, **turn})
+
+
+@app.post("/api/career/dialogue/turn")
+def api_career_dialogue_turn():
+    _, err = _require_login()
+    if err:
+        return err
+
+    payload: Dict[str, Any] = request.get_json(silent=True) or {}
+    state = payload.get("state") or default_state()
+    user_message = str(payload.get("user_message", "")).strip()
+
+    if not user_message:
+        return jsonify({"ok": False, "error": "请输入本轮回答内容。"}), 400
+
+    llm = _build_career_llm_client()
+    turn = next_dialogue_turn(
+        state=state,
+        user_message=user_message,
+        llm_client=llm,
+        recommend_jobs=_career_recommend_jobs_for_dialogue,
+    )
+    return jsonify({"ok": True, **turn, "final_student_text": build_final_student_text(turn["state"])})
 
 
 if __name__ == "__main__":

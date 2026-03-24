@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>职探AI | 登录</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-deep: #06121f;
+            --bg-mid: #0b2033;
+            --line: rgba(117, 231, 255, 0.32);
+            --text-main: #e7f7ff;
+            --text-dim: #96b8c8;
+            --cyan: #43d2ff;
+            --teal: #33ffca;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            min-height: 100vh;
+            background: radial-gradient(circle at 10% 15%, #0f2d48 0%, var(--bg-deep) 40%),
+                        radial-gradient(circle at 90% 75%, #12415d 0%, #030c15 45%);
+            color: var(--text-main);
+            font-family: "Noto Sans SC", "Microsoft YaHei", sans-serif;
+            display: grid;
+            place-items: center;
+            padding: 16px;
+        }
+        .login-shell {
+            width: min(520px, 100%);
+            border: 1px solid var(--line);
+            border-radius: 16px;
+            background: linear-gradient(145deg, rgba(8, 30, 50, 0.9), rgba(5, 21, 36, 0.9));
+            padding: 22px;
+            overflow: hidden;
+        }
+        .views {
+            position: relative;
+            min-height: 360px;
+        }
+        .view {
+            transition: 0.28s ease;
+        }
+        .view[hidden] {
+            display: none !important;
+        }
+        .brand {
+            font-family: "Orbitron", sans-serif;
+            font-size: 28px;
+            letter-spacing: 3px;
+            margin-bottom: 8px;
+            color: #9de8ff;
+        }
+        .brand.register {
+            color: #99ffd8;
+            text-shadow: 0 0 14px rgba(51, 255, 202, 0.28);
+        }
+        .sub {
+            color: var(--text-dim);
+            margin-bottom: 16px;
+        }
+        .register-shell {
+            border: 1px solid rgba(51, 255, 202, 0.28);
+            border-radius: 14px;
+            background: linear-gradient(145deg, rgba(8, 44, 46, 0.58), rgba(4, 24, 30, 0.58));
+            padding: 12px;
+        }
+        .field {
+            margin-bottom: 10px;
+        }
+        .field input {
+            width: 100%;
+            background: rgba(8, 31, 51, 0.8);
+            color: var(--text-main);
+            border: 1px solid rgba(67, 210, 255, 0.26);
+            border-radius: 10px;
+            padding: 10px;
+            font-family: inherit;
+        }
+        .register-shell .field input {
+            border-color: rgba(51, 255, 202, 0.28);
+            background: rgba(6, 38, 40, 0.72);
+        }
+        .actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+            flex-wrap: wrap;
+        }
+        button {
+            border: 1px solid rgba(67, 210, 255, 0.62);
+            border-radius: 10px;
+            font-weight: 700;
+            cursor: pointer;
+            padding: 10px 14px;
+            color: var(--text-main);
+            background: linear-gradient(130deg, rgba(67, 210, 255, 0.22), rgba(51, 255, 202, 0.2));
+        }
+        button.mint {
+            border-color: rgba(51, 255, 202, 0.68);
+            background: linear-gradient(130deg, rgba(51, 255, 202, 0.28), rgba(67, 210, 255, 0.2));
+        }
+        button.ghost {
+            background: transparent;
+            color: var(--text-dim);
+            border-color: rgba(150, 184, 200, 0.4);
+        }
+        .msg {
+            margin-top: 12px;
+            color: #bdefff;
+            line-height: 1.6;
+            min-height: 24px;
+        }
+        .msg.error {
+            color: #ffc4c4;
+        }
+    </style>
+</head>
+<body>
+<section class="login-shell">
+    <div class="views">
+        <div class="view" id="login-view">
+            <div class="brand">ZT-AI LOGIN</div>
+            <div class="sub">请先登录账号，系统会按账号隔离你的报告与输出文件。</div>
+            <div class="field">
+                <input id="username" type="text" placeholder="用户名">
+            </div>
+            <div class="field">
+                <input id="password" type="password" placeholder="密码">
+            </div>
+            <div class="actions">
+                <button id="login-btn">登录</button>
+                <button id="switch-register-btn" class="ghost">去注册</button>
+            </div>
+        </div>
+
+        <div class="view" id="register-view" hidden>
+            <div class="brand register">ZT-AI REGISTER</div>
+            <div class="sub">创建新账号后即可进入系统，输出文件将按账号自动隔离。</div>
+            <div class="register-shell">
+                <div class="field">
+                    <input id="register-username" type="text" placeholder="新用户名（3-32位，字母数字下划线）">
+                </div>
+                <div class="field">
+                    <input id="register-password" type="password" placeholder="设置密码（至少6位）">
+                </div>
+                <div class="field">
+                    <input id="register-password-confirm" type="password" placeholder="确认密码">
+                </div>
+                <div class="actions">
+                    <button id="register-btn" class="mint">立即注册</button>
+                    <button id="switch-login-btn" class="ghost">返回登录</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="msg" id="msg">未注册可先创建账号。</div>
+</section>
+
+<script>
+const usernameEl = document.getElementById("username");
+const passwordEl = document.getElementById("password");
+const registerUsernameEl = document.getElementById("register-username");
+const registerPasswordEl = document.getElementById("register-password");
+const registerPasswordConfirmEl = document.getElementById("register-password-confirm");
+const loginViewEl = document.getElementById("login-view");
+const registerViewEl = document.getElementById("register-view");
+const msgEl = document.getElementById("msg");
+let currentMode = "login";
+
+function setMsg(text, isError = false) {
+    msgEl.textContent = String(text || "");
+    msgEl.classList.toggle("error", !!isError);
+}
+
+async function postJson(url, body) {
+    const resp = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.ok) {
+        throw new Error(data.message || "请求失败");
+    }
+    return data;
+}
+
+async function register() {
+    const username = String(registerUsernameEl.value || "").trim();
+    const password = String(registerPasswordEl.value || "");
+    const confirm = String(registerPasswordConfirmEl.value || "");
+    if (!username || !password) {
+        setMsg("请输入用户名和密码", true);
+        return;
+    }
+    if (password !== confirm) {
+        setMsg("两次输入的密码不一致", true);
+        return;
+    }
+    try {
+        await postJson("/api/auth/register", { username, password });
+        registerUsernameEl.value = "";
+        registerPasswordEl.value = "";
+        registerPasswordConfirmEl.value = "";
+        switchToLogin();
+        setMsg("注册成功，请登录", false);
+    } catch (err) {
+        setMsg(`注册失败: ${err.message}`, true);
+    }
+}
+
+async function login() {
+    const username = String(usernameEl.value || "").trim();
+    const password = String(passwordEl.value || "");
+    if (!username || !password) {
+        setMsg("请输入用户名和密码", true);
+        return;
+    }
+    try {
+        await postJson("/api/auth/login", { username, password });
+        usernameEl.value = "";
+        passwordEl.value = "";
+        window.location.href = "/";
+    } catch (err) {
+        setMsg(`登录失败: ${err.message}`, true);
+    }
+}
+
+function switchToRegister() {
+    currentMode = "register";
+    loginViewEl.hidden = true;
+    registerViewEl.hidden = false;
+    setMsg("请填写注册信息。", false);
+    registerUsernameEl.focus();
+}
+
+function switchToLogin() {
+    currentMode = "login";
+    registerViewEl.hidden = true;
+    loginViewEl.hidden = false;
+    setMsg("未注册可先创建账号。", false);
+    usernameEl.focus();
+}
+
+document.getElementById("register-btn")?.addEventListener("click", register);
+document.getElementById("login-btn")?.addEventListener("click", login);
+document.getElementById("switch-register-btn")?.addEventListener("click", switchToRegister);
+document.getElementById("switch-login-btn")?.addEventListener("click", switchToLogin);
+document.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+        if (currentMode === "register") {
+            register();
+            return;
+        }
+        login();
+    }
+});
+</script>
+</body>
+</html>
