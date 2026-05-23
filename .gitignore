@@ -1,0 +1,18 @@
+# Python bytecode caches
+__pycache__/
+*.py[cod]
+*__pycache__*
+
+# Data and Models (Large files)
+data/
+models/
+
+# Frontend build artifacts
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+static/dist/
+
+# Local environment / secrets
+.env
+.env.local

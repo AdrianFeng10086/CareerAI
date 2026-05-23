@@ -1,12 +1,144 @@
 from __future__ import annotations
 
 import html
+import importlib
 import math
 import re
 import unicodedata
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Iterable
+
+
+def _clamp_score(value: Any, default: float = 60.0) -> float:
+    try:
+        num = float(value)
+    except Exception:
+        num = float(default)
+    return max(0.0, min(100.0, num))
+
+
+def _build_rule_ability_radar(student_profile: Dict[str, Any], matches: List[Dict[str, Any]]) -> Dict[str, Any]:
+    axes = [
+        "专业基础",
+        "专业技能",
+        "发展潜力",
+        "职业素养",
+        "沟通协作",
+        "抗压能力",
+        "创新能力",
+    ]
+
+    top = matches[0] if matches else {}
+    dims = top.get("dimension_scores", {}) if isinstance(top, dict) else {}
+
+    communication = _clamp_score(student_profile.get("communication_ability", 62), default=62)
+    stress = _clamp_score(student_profile.get("stress_tolerance", 58), default=58)
+    innovation = _clamp_score(student_profile.get("innovation_ability", 66), default=66)
+
+    current_values = [
+        _clamp_score(dims.get("foundation_requirements", 68), default=68),
+        _clamp_score(dims.get("professional_skills", 66), default=66),
+        _clamp_score(dims.get("development_potential", 70), default=70),
+        _clamp_score(dims.get("professional_quality", 65), default=65),
+        communication,
+        stress,
+        innovation,
+    ]
+
+    target_values = [
+        min(100.0, max(75.0, current_values[0] + 8.0)),
+        min(100.0, max(78.0, current_values[1] + 8.0)),
+        min(100.0, max(80.0, current_values[2] + 6.0)),
+        min(100.0, max(78.0, current_values[3] + 8.0)),
+        min(100.0, max(75.0, current_values[4] + 10.0)),
+        min(100.0, max(75.0, current_values[5] + 12.0)),
+        min(100.0, max(78.0, current_values[6] + 8.0)),
+    ]
+
+    return {
+        "title": "就业能力画像",
+        "axes": axes,
+        "datasets": [
+            {"name": "当前状态", "values": [round(v, 1) for v in current_values]},
+            {"name": "目标线", "values": [round(v, 1) for v in target_values]},
+        ],
+        "minValue": 0.0,
+        "maxValue": 100.0,
+        "scoredBy": "rule",
+    }
+
+
+def build_ability_radar_data(
+    student_profile: Dict[str, Any],
+    matches: List[Dict[str, Any]],
+    llm_client: Any | None = None,
+) -> Dict[str, Any]:
+    fallback = _build_rule_ability_radar(student_profile, matches)
+    if not llm_client or not getattr(llm_client, "enabled", False):
+        return fallback
+
+    top = matches[:3] if isinstance(matches, list) else []
+    system_prompt = (
+        "你是职业能力评估专家。请根据学生画像与岗位匹配结果输出严格JSON，不要输出解释文本。"
+    )
+    user_prompt = (
+        "请输出能力雷达图数据，JSON字段固定为: "
+        "title, axes, datasets, minValue, maxValue。"
+        "\n约束:"
+        "\n1) axes 必须是7个维度: 专业基础, 专业技能, 发展潜力, 职业素养, 沟通协作, 抗压能力, 创新能力"
+        "\n2) datasets 至少2条，第一条name=当前状态，第二条name=目标线"
+        "\n3) values 与 axes 一一对应，分数范围0-100，可保留1位小数"
+        "\n4) 目标线应总体高于当前状态，但提升幅度合理（通常 5-15 分）"
+        "\n5) 只返回JSON对象"
+        f"\n学生画像: {student_profile}"
+        f"\n匹配结果Top3: {top}"
+    )
+
+    try:
+        data = llm_client.generate_json(system_prompt, user_prompt)
+    except Exception:
+        data = {}
+
+    if not isinstance(data, dict):
+        return fallback
+
+    axes = data.get("axes")
+    datasets = data.get("datasets")
+    if not isinstance(axes, list) or len(axes) != 7 or not isinstance(datasets, list) or len(datasets) < 2:
+        return fallback
+
+    normalized_axes = [str(x or "").strip() for x in axes]
+    expected_axes = ["专业基础", "专业技能", "发展潜力", "职业素养", "沟通协作", "抗压能力", "创新能力"]
+    if normalized_axes != expected_axes:
+        return fallback
+
+    normalized_sets: List[Dict[str, Any]] = []
+    for ds in datasets[:4]:
+        if not isinstance(ds, dict):
+            continue
+        name = str(ds.get("name", "")).strip() or "序列"
+        values = ds.get("values") if isinstance(ds.get("values"), list) else []
+        fixed = [_clamp_score(x, default=60) for x in values[: len(expected_axes)]]
+        while len(fixed) < len(expected_axes):
+            fixed.append(60.0)
+        normalized_sets.append({"name": name, "values": [round(v, 1) for v in fixed]})
+
+    if len(normalized_sets) < 2:
+        return fallback
+
+    # Ensure the first two series keep expected semantic names.
+    normalized_sets[0]["name"] = "当前状态"
+    normalized_sets[1]["name"] = "目标线"
+
+    return {
+        "title": str(data.get("title", "就业能力画像") or "就业能力画像"),
+        "axes": expected_axes,
+        "datasets": normalized_sets,
+        "minValue": 0.0,
+        "maxValue": 100.0,
+        "scoredBy": "ai",
+    }
 
 
 def _build_actions(student_profile: Dict[str, Any], top_match: Dict[str, Any]) -> Dict[str, List[str]]:
@@ -174,12 +306,29 @@ def generate_report_markdown(
     completeness = student_profile.get("completeness_score", 0)
     competitiveness = student_profile.get("competitiveness_score", 0)
 
+    # 构造雷达图 mermaid 块，仅用于 PDF 导出识别并独立渲染。
+    ability_radar = build_ability_radar_data(student_profile, matches, llm_client)
+    radar_mermaid = (
+        f"\n\n```mermaid\nradar-beta\n    title {ability_radar.get('title', '就业能力画像')}\n"
+        "    axis \"专业基础\" [0.0, 100.0]\n"
+        "    axis \"专业技能\" [0.0, 100.0]\n"
+        "    axis \"发展潜力\" [0.0, 100.0]\n"
+        "    axis \"职业素养\" [0.0, 100.0]\n"
+        "    axis \"沟通协作\" [0.0, 100.0]\n"
+        "    axis \"抗压能力\" [0.0, 100.0]\n"
+        "    axis \"创新能力\" [0.0, 100.0]\n"
+    )
+    for ds in ability_radar.get("datasets", []):
+        radar_mermaid += f"    \"{ds['name']}\": {ds['values']}\n"
+    radar_mermaid += "```\n"
+
     fallback_report = f"""# 大学生求职与职业规划发展报告
 
 生成时间: {now}
 
 ## 1. 学生就业能力画像
 
+{radar_mermaid}
 - 技能: {"、".join(student_profile.get("skills", [])) or "暂无"}
 - 证书: {"、".join(student_profile.get("certificates", [])) or "暂无"}
 - 就业意愿: {student_profile.get("employment_intention") or "未明确"}
@@ -267,12 +416,16 @@ def generate_report_markdown(
         "vertical_graph": vertical_graph[:8],
         "transition_graph": transition_graph,
         "actions": actions,
+        "ability_radar_mermaid": radar_mermaid, # 明确告诉 AI 这一章节需包含雷达图块
     }
 
     system_prompt, user_prompt = _build_ai_report_prompt(report_context)
     ai_report = llm_client.generate_text(system_prompt, user_prompt, max_tokens=3800)
 
     if ai_report and "#" in ai_report and "匹配" in ai_report:
+        # 补丁：确保 AI 输出中包含雷达图块以供 PDF 导出渲染
+        if "radar-beta" not in ai_report:
+            ai_report = ai_report.replace("## 1. 学生就业能力画像", f"## 1. 学生就业能力画像\n\n{radar_mermaid}")
         return ai_report.strip()
     return fallback_report
 
@@ -356,6 +509,7 @@ def _build_ai_report_prompt(report_context: Dict[str, Any]) -> tuple[str, str]:
         "4. 岗位关联图谱与发展路径（垂直+换岗）\n"
         "5. 双线职业目标与分阶段行动计划（以职业规划主线为主，求职推进为辅）\n"
         "6. 风险提示与动态调整机制\n"
+        "注意：不要在报告正文中输出 mermaid 代码块或雷达图，它们将由前端单独渲染。\n"
         "请优先读取student_profile中的academic_stage与academic_stage_label字段，并据此分层给建议。\n"
         "风险判定规则(必须遵守): 分数>=70判定为优势，40-69判定为待提升，<40判定为风险；"
         "若已判定为优势，不得再写该维度‘明显短板’。\n"
@@ -375,10 +529,55 @@ def _chunk_text(text: str, size: int) -> List[str]:
     return [text[i : i + size] for i in range(0, len(text), size)]
 
 
+def _render_markdown_to_html(content: str) -> str:
+    """将 Markdown 渲染为 HTML 用以在线预览"""
+    try:
+        md_module = importlib.import_module("markdown")
+    except Exception:
+        return ""
+
+    body_html = md_module.markdown(
+        content,
+        extensions=["extra", "tables", "toc"],
+    )
+
+    full_html = f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>职业规划报告</title>
+    <style>
+        body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; line-height: 1.6; color: #333; max-width: 900px; margin: 0 auto; padding: 40px 20px; background: #f8f9fa; }}
+        .report-content {{ background: #fff; padding: 40px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }}
+        h1 {{ color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; margin-top: 0; }}
+        h2 {{ color: #2980b9; border-left: 4px solid #3498db; padding-left: 15px; margin-top: 30px; }}
+        h3 {{ color: #34495e; margin-top: 25px; }}
+        table {{ width: 100%; border-collapse: collapse; margin: 20px 0; }}
+        th, td {{ border: 1px solid #ddd; padding: 12px; text-align: left; }}
+        th {{ background-color: #f2f2f2; font-weight: bold; }}
+        tr:nth-child(even) {{ background-color: #fafafa; }}
+        code {{ background-color: #f0f0f0; padding: 2px 4px; border-radius: 4px; font-family: Consolas, monospace; }}
+        pre {{ background-color: #f0f0f0; padding: 15px; border-radius: 4px; overflow-x: auto; }}
+        ul, ol {{ padding-left: 20px; }}
+        li {{ margin-bottom: 8px; }}
+        .meta {{ color: #666; font-size: 0.9em; margin-bottom: 30px; }}
+    </style>
+</head>
+<body>
+    <div class="report-content">
+        {body_html}
+    </div>
+</body>
+</html>
+"""
+    return full_html
+
+
 def export_report(markdown_text: str, output_dir: Path, stem: str) -> Dict[str, str]:
     output_dir.mkdir(parents=True, exist_ok=True)
     stem_safe = "".join(ch for ch in stem if ch.isalnum() or ch in ("_", "-")) or "career_report"
     pdf_path = output_dir / f"{stem_safe}.pdf"
+    html_path = output_dir / f"{stem_safe}.html"
 
     result: Dict[str, str] = {}
     try:
@@ -386,6 +585,14 @@ def export_report(markdown_text: str, output_dir: Path, stem: str) -> Dict[str, 
         result["pdf"] = pdf_path.name
     except Exception as exc:
         result["pdf_error"] = str(exc)
+
+    try:
+        html_content = _render_markdown_to_html(markdown_text)
+        if html_content:
+            html_path.write_text(html_content, encoding="utf-8")
+            result["html"] = html_path.name
+    except Exception as exc:
+        result["html_error"] = str(exc)
 
     return result
 

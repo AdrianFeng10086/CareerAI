@@ -70,11 +70,14 @@ def _is_yes(text: str) -> bool:
         return False
     if _is_no(t):
         return False
-    return bool(re.search(r"^(有|是|要|好|可以|好的|行|想|yes|y|ok)$", t, flags=re.IGNORECASE))
+    # 扩大匹配范围，涵盖常见的“有”及其变体
+    return bool(re.search(r"^(有|是|要|好|可以|好的|行|想|yes|y|ok|准备了|准备中)$", t, flags=re.IGNORECASE)) or "有" in t
 
 
 def _is_no(text: str) -> bool:
-    return bool(re.search(r"(没有|否|no|n|无)", text, flags=re.IGNORECASE))
+    t = str(text or "").strip()
+    # 确保单纯的“没”或“没有”都能被识别
+    return bool(re.search(r"^(没有|否|no|n|无|没|暂无|还没|还没准备)$", t, flags=re.IGNORECASE)) or t == "没" or t == "没有"
 
 
 def _explicit_skip_tools(text: str) -> bool:
@@ -462,11 +465,21 @@ def next_dialogue_turn(
     msg = str(user_message or "").strip()
 
     if not msg:
-        first = _friendly_ask(
-            llm_client,
-            goal="开启第一轮并确认是否已有简历",
-            context={"step": 1},
-            fallback="我们先轻松开始：你目前有简历或完整自述吗？回复“有”或“没有”都可以。",
+        # 首轮开场优先融合用户在页面预填的年级/专业信息。
+        major = str(st.get("major", "") or "").strip()
+        grade = str(st.get("grade", "") or "").strip()
+
+        intro = ""
+        if grade and major:
+            intro = f"看到你是{grade}的{major}同学，"
+        elif major:
+            intro = f"看到你是{major}相关专业同学，"
+        elif grade:
+            intro = f"看到你目前是{grade}，"
+
+        first = (
+            f"{intro}我们先轻松开始：请问你手头目前有现成的简历吗？"
+            "或者简单的自我介绍也可以。直接回复‘有’或‘没有’即可。"
         )
         return {"state": st, "assistant_message": first, "step": st["step"], "ready": bool(st.get("ready"))}
 
@@ -486,12 +499,35 @@ def next_dialogue_turn(
 
         if _is_no(msg):
             st["has_resume"] = False
-            st["node"] = "r1_major"
+            if not str(st.get("major", "") or "").strip():
+                st["node"] = "r1_major"
+                q = _friendly_ask(
+                    llm_client,
+                    goal="采集专业",
+                    context={"step": 1},
+                    fallback="没问题，我们一步一步来。先告诉我你的专业是什么？",
+                )
+                return {"state": st, "assistant_message": q, "step": 1, "ready": False}
+
+            if not str(st.get("grade", "") or "").strip():
+                st["node"] = "r1_grade"
+                q = _friendly_ask(
+                    llm_client,
+                    goal="采集年级",
+                    context={"major": st.get("major", "")},
+                    fallback=f"已记录你的专业是“{st.get('major', '')}”。你现在是大几或研几呢？",
+                )
+                return {"state": st, "assistant_message": q, "step": 1, "ready": False}
+
+            st["node"] = "r1_interests"
             q = _friendly_ask(
                 llm_client,
-                goal="采集专业",
-                context={"step": 1},
-                fallback="没问题，我们一步一步来。先告诉我你的专业是什么？",
+                goal="采集兴趣方向",
+                context={"major": st.get("major", ""), "grade": st.get("grade", "")},
+                fallback=(
+                    f"已记录：{st.get('grade', '')}，{st.get('major', '')}。"
+                    "你目前更感兴趣的方向是什么，比如数据、开发、产品或运营？"
+                ),
             )
             return {"state": st, "assistant_message": q, "step": 1, "ready": False}
 
@@ -523,6 +559,16 @@ def next_dialogue_turn(
 
     if node == "r1_major":
         st["major"] = msg
+        if str(st.get("grade", "") or "").strip():
+            st["node"] = "r1_interests"
+            q = _friendly_ask(
+                llm_client,
+                goal="采集兴趣方向",
+                context={"major": st["major"], "grade": st.get("grade", "")},
+                fallback="好的，年级和专业都已记录。你目前更感兴趣的方向是什么？",
+            )
+            return {"state": st, "assistant_message": q, "step": 1, "ready": False}
+
         st["node"] = "r1_grade"
         q = _friendly_ask(
             llm_client,
@@ -566,7 +612,7 @@ def next_dialogue_turn(
                 llm_client,
                 goal="没有目标时进入探索问题1",
                 context={},
-                fallback="完全正常，我们先做探索。你更愿意做哪类事情：写代码、分析数据、沟通协调、产品策划还是设计创作？",
+                fallback="没关系，我们慢慢来～你平时更愿意做哪类事情：写代码、分析数据、做产品、搞设计、做运营、跑市场、管人事、做财务、教学生、做工程、做医护、处理法律，还是其他呢？",
             )
             return {"state": st, "assistant_message": q, "step": 2, "ready": False}
 

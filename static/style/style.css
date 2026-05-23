@@ -16,6 +16,25 @@
     box-sizing: border-box;
 }
 
+/* 优化滚动条样式 */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--line);
+    border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--cyan);
+}
+
 body {
     margin: 0;
     min-height: 100vh;
@@ -61,6 +80,11 @@ body {
     width: min(1160px, calc(100vw - 2rem));
     margin: 0 auto;
     padding: 24px 0 72px;
+}
+
+.career-page .page-wrap {
+    width: min(1520px, calc(100vw - 2rem));
+    padding: 18px 0 56px;
 }
 
 .top-bar {
@@ -313,9 +337,7 @@ body {
 }
 
 .reports-layout {
-    display: grid;
-    grid-template-columns: 320px 1fr;
-    gap: 14px;
+    display: block;
     height: calc(84vh - 120px);
 }
 
@@ -345,6 +367,45 @@ body {
     margin-top: 4px;
 }
 
+.report-preview-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 22;
+    background: rgba(2, 12, 20, 0.72);
+    display: grid;
+    place-items: center;
+}
+
+.report-preview-modal[hidden] {
+    display: none !important;
+}
+
+.report-preview-dialog {
+    width: min(1180px, calc(100vw - 2rem));
+    height: min(88vh, 980px);
+    border-radius: 16px;
+    border: 1px solid rgba(67, 210, 255, 0.32);
+    background: rgba(6, 24, 40, 0.94);
+    box-shadow: var(--shadow);
+    display: grid;
+    grid-template-rows: auto 1fr;
+    overflow: hidden;
+}
+
+.report-preview-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 14px;
+    border-bottom: 1px solid rgba(67, 210, 255, 0.24);
+}
+
+.report-preview-head h4 {
+    margin: 0;
+    color: #bdefff;
+    font-size: 16px;
+}
+
 .report-viewer {
     border: 1px solid rgba(67, 210, 255, 0.18);
     border-radius: 12px;
@@ -353,6 +414,11 @@ body {
     color: #dcecf5;
     overflow-y: auto;
     background: rgba(6, 24, 40, 0.55);
+}
+
+.report-preview-dialog .report-viewer {
+    margin: 10px;
+    height: calc(100% - 20px);
 }
 
 .report-loading,
@@ -677,7 +743,6 @@ body {
 
 .interview-resume-box,
 .interview-question-box,
-.interview-answer-form,
 .interview-log,
 .interview-feedback {
     border: 1px solid rgba(67, 210, 255, 0.22);
@@ -691,8 +756,7 @@ body {
     font-size: 13px;
 }
 
-#interview-resume-text,
-#interview-answer-input {
+#interview-resume-text {
     width: 100%;
     margin-top: 8px;
     background: rgba(8, 31, 51, 0.8);
@@ -702,6 +766,43 @@ body {
     padding: 10px;
     font-family: inherit;
     line-height: 1.6;
+}
+
+.interview-answer-form {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.interview-answer-form textarea {
+    width: 100%;
+    min-height: 80px;
+    padding: 12px;
+    border-radius: 14px;
+    border: 1px solid rgba(67, 210, 255, 0.25);
+    background: rgba(4, 20, 34, 0.6);
+    backdrop-filter: blur(10px);
+    color: var(--text-main);
+    outline: none;
+    resize: vertical;
+    font-family: inherit;
+    line-height: 1.6;
+    transition: all 0.3s ease;
+}
+
+.interview-answer-form textarea:focus {
+    border-color: rgba(67, 210, 255, 0.65);
+    box-shadow: 0 0 12px rgba(67, 210, 255, 0.15), inset 0 0 6px rgba(67, 210, 255, 0.05);
+}
+
+.interview-answer-form textarea::placeholder {
+    color: rgba(189, 239, 255, 0.35);
+}
+
+.interview-answer-form .module-btn {
+    align-self: flex-end;
+    padding: 6px 20px;
+    min-height: 38px;
 }
 
 .interview-question-head {
@@ -725,12 +826,6 @@ body {
     padding: 0;
     color: #b7ddeb;
     line-height: 1.6;
-}
-
-.interview-answer-form {
-    display: grid;
-    grid-template-columns: 1fr 160px;
-    gap: 10px;
 }
 
 .interview-log {
@@ -803,12 +898,84 @@ body {
 }
 
 
-.career-workbench {
+.career-tools-visual {
+    border: 1px solid rgba(67, 210, 255, 0.24);
+    border-radius: 12px;
+    background: rgba(6, 24, 40, 0.6);
+    padding: 10px 12px;
     display: grid;
-    grid-template-rows: auto minmax(280px, 1fr) auto auto;
-    gap: 12px;
-    min-height: 72vh;
-    position: relative;
+    gap: 10px;
+}
+
+.career-tools-title {
+    color: #a6f1ff;
+    font-size: 15px;
+    font-weight: 700;
+}
+
+.career-tools-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+}
+
+.career-tools-card {
+    border: 1px solid rgba(67, 210, 255, 0.2);
+    border-radius: 10px;
+    background: rgba(8, 31, 51, 0.7);
+    padding: 10px;
+}
+
+.career-tools-card h4 {
+    margin: 0 0 8px;
+    color: #a4f4ff;
+    font-size: 14px;
+}
+
+.career-radar-wrap {
+    border: 1px solid rgba(67, 210, 255, 0.22);
+    border-radius: 10px;
+    background: rgba(7, 28, 46, 0.86);
+    height: 260px;
+    padding: 8px;
+}
+
+#career-holland-radar {
+    width: 100% !important;
+    height: 100% !important;
+}
+
+.career-tools-note {
+    margin-top: 8px;
+    color: #cdefff;
+    font-size: 13px;
+    line-height: 1.65;
+}
+
+.career-iceberg-list {
+    margin-top: 8px;
+    display: grid;
+    gap: 8px;
+}
+
+.career-iceberg-item {
+    border: 1px solid rgba(67, 210, 255, 0.2);
+    border-radius: 8px;
+    background: rgba(67, 210, 255, 0.08);
+    padding: 8px;
+    display: grid;
+    gap: 4px;
+}
+
+.career-iceberg-item b {
+    color: #9de8ff;
+    font-size: 13px;
+}
+
+.career-iceberg-item span {
+    color: #dff2ff;
+    font-size: 13px;
+    line-height: 1.5;
 }
 
 .career-zones {
@@ -921,9 +1088,32 @@ body {
 .career-stream-head {
     display: flex;
     justify-content: space-between;
+    align-items: center;
     gap: 10px;
     color: #bdefff;
     font-size: 13px;
+}
+
+.career-stream-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.career-stream-typing {
+    display: none;
+    min-width: 10px;
+    color: var(--cyan);
+    font-weight: 700;
+}
+
+.career-stream-typing::before {
+    content: "█";
+}
+
+.career-stream-typing.active {
+    display: inline-block;
+    animation: streamBlink 0.85s steps(1, end) infinite;
 }
 
 .career-stream-body {
@@ -936,6 +1126,12 @@ body {
     line-height: 1.7;
     white-space: pre-wrap;
     overflow-y: auto;
+    font-family: "Microsoft YaHei", "Consolas", monospace;
+    font-size: 13.5px;
+}
+
+@keyframes streamBlink {
+    50% { opacity: 0; }
 }
 
 .career-input-bar {
@@ -1240,6 +1436,22 @@ body {
     white-space: pre-wrap;
 }
 
+.msg .msg-markdown {
+    margin: 0;
+    max-width: none;
+    line-height: 1.6;
+    color: inherit;
+    background: transparent;
+}
+
+.msg .msg-markdown > :first-child {
+    margin-top: 0;
+}
+
+.msg .msg-markdown > :last-child {
+    margin-bottom: 0;
+}
+
 .msg.user {
     background: rgba(67, 210, 255, 0.18);
     border: 1px solid rgba(67, 210, 255, 0.3);
@@ -1271,6 +1483,73 @@ body {
     display: grid;
     grid-template-columns: 1fr 160px;
     gap: 10px;
+    align-items: end;
+}
+
+.chat-form textarea {
+    min-height: 100px;
+    max-height: 240px;
+    resize: vertical;
+}
+
+.chat-form .module-btn {
+    height: 52px;
+}
+
+.chat-composer {
+    display: flex;
+    align-items: flex-end;
+    gap: 12px;
+    padding: 14px 16px;
+    background: rgba(8, 30, 50, 0.8);
+    border: 1px solid rgba(67, 210, 255, 0.3);
+    border-radius: 14px;
+    margin-top: 16px;
+    box-shadow: 0 4px 16px rgba(2, 10, 18, 0.4);
+    transition: border-color 0.3s;
+}
+
+.chat-composer:focus-within {
+    border-color: rgba(51, 255, 202, 0.6);
+}
+
+.chat-composer textarea {
+    flex: 1;
+    min-height: 24px;
+    max-height: 220px;
+    background: transparent;
+    border: none;
+    color: var(--text-main);
+    font-size: 14px;
+    line-height: 1.5;
+    resize: none;
+    font-family: inherit;
+    padding: 8px 0;
+    outline: none;
+}
+
+.chat-composer textarea::placeholder {
+    color: rgba(150, 184, 200, 0.4);
+}
+
+.chat-composer .ghost-btn, 
+.chat-composer .module-btn {
+    height: 40px;
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 20px;
+    border-radius: 8px;
+    font-size: 14px;
+}
+
+.input-hint {
+    margin-top: 8px;
+    font-size: 12px;
+    color: rgba(150, 184, 200, 0.6);
+    text-align: right;
+    padding-right: 4px;
 }
 
 .login-form {
@@ -1402,9 +1681,8 @@ body {
         grid-template-columns: 1fr;
     }
 
-    .career-workbench {
-        min-height: auto;
-        grid-template-rows: auto auto auto auto;
+    .career-tools-grid {
+        grid-template-columns: 1fr;
     }
 
     .panel {

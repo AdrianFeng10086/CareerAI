@@ -240,7 +240,7 @@ def background_scan_monitor(qr_id: str):
                                 login_step="logged_in"
                             )
 
-                            # 自动同步 Cookie 到 config.json
+                            # 自动同步 Cookie 到 .env
                             save_cookie_to_config(final_cookie_str, bst_value)
 
                             print(f"[后台监控] 🎉 登录成功！最终 Cookie 已保存")
@@ -262,7 +262,7 @@ def background_scan_monitor(qr_id: str):
                                 login_step="logged_in"
                             )
 
-                            # 自动同步 Cookie 到 config.json
+                            # 自动同步 Cookie 到 .env
                             save_cookie_to_config(cookie_str, bst_value)
 
                             print(f"[后台监控] 🎉 登录成功！初始 Cookie 已保存")
@@ -512,11 +512,17 @@ class BossZhipinAPI:
     EXPERIENCE_MAP = {
         '在校生': 108,
         '应届生': 102,
-        '不限': 101,
+        '不限': '',
+        '经验不限': 101,
+        '1年以内': 103,
         '一年以内': 103,
+        '1-3年': 104,
         '一到三年': 104,
+        '3-5年': 105,
         '三到五年': 105,
+        '5-10年': 106,
         '五到十年': 106,
+        '10年以上': 107,
         '十年以上': 107
     }
 
@@ -542,7 +548,9 @@ class BossZhipinAPI:
         # 转换文本参数为代码
         converted_params = {}
         if 'experience' in params and params['experience'] in BossZhipinAPI.EXPERIENCE_MAP:
-            converted_params['experience'] = BossZhipinAPI.EXPERIENCE_MAP[params['experience']]
+            exp_code = BossZhipinAPI.EXPERIENCE_MAP[params['experience']]
+            if exp_code != '':
+                converted_params['experience'] = exp_code
 
         if 'jobType' in params and params['jobType'] in BossZhipinAPI.JOB_TYPE_MAP:
             converted_params['jobType'] = BossZhipinAPI.JOB_TYPE_MAP[params['jobType']]
@@ -1173,7 +1181,7 @@ async def get_recommend_jobs_tool(
 
     参数说明：
     - page: 页码，从1开始
-    - experience: 工作经验，可选值：在校生、应届生、不限、一年以内、一到三年、三到五年、五到十年、十年以上
+    - experience: 工作经验，可选值：在校生、应届生、不限、经验不限、1年以内、一年以内、1-3年、一到三年、3-5年、三到五年、5-10年、五到十年、10年以上、十年以上
     - job_type: 工作类型，可选值：全职、兼职
     - salary: 薪资范围，可选值：3k以下、3-5k、5-10k、10-20k、20-50k、50以上
     """
@@ -1275,7 +1283,7 @@ async def run_login_process() -> dict:
     2. 在终端提示用户扫码
     3. 轮询等待扫码和确认
     4. 完成安全验证
-    5. 自动将 Cookie 同步到 config.json
+    5. 自动将 Cookie 同步到 .env
 
     Returns:
         dict: {
@@ -1403,10 +1411,10 @@ async def run_login_process() -> dict:
             print(f"⚠️ 安全验证失败，使用初始 Cookie: {e}")
             final_cookie_str = cookie_str
 
-        # 步骤7：同步 Cookie 到 config.json
+        # 步骤7：同步 Cookie 到 .env
         save_cookie_to_config(final_cookie_str, bst_value)
 
-        print("\n🎉 登录完成！Cookie 已自动同步到 config.json")
+        print("\n🎉 登录完成！Cookie 已自动同步到 .env")
         print("=" * 50 + "\n")
 
         # 清理二维码文件
@@ -1437,7 +1445,7 @@ async def run_login_process() -> dict:
 
 @mcp.tool()
 async def sync_cookie_to_config(ctx: Context) -> str:
-    """将当前登录的 Cookie 同步保存到 config.json，供 scraper/main 等模块使用"""
+    """将当前登录的 Cookie 同步保存到 .env，供 scraper/main 等模块使用"""
     try:
         if not state.login_status.is_logged_in:
             return json.dumps({
@@ -1451,16 +1459,16 @@ async def sync_cookie_to_config(ctx: Context) -> str:
         success = save_cookie_to_config(cookie, bst)
 
         if success:
-            await ctx.info("✅ Cookie 已同步到 config.json")
+            await ctx.info("✅ Cookie 已同步到 .env")
             return json.dumps({
                 "status": "success",
-                "message": "Cookie 已同步到 config.json",
+                "message": "Cookie 已同步到 .env",
                 "config_path": _get_config_path()
             }, ensure_ascii=False, indent=2)
         else:
             return json.dumps({
                 "status": "error",
-                "message": "保存 config.json 失败"
+                "message": "保存 .env 失败"
             }, ensure_ascii=False, indent=2)
 
     except Exception as e:

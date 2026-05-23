@@ -125,7 +125,7 @@ class BossZhipinScraper:
                 bst = result.get("bst")
                 if cookie:
                     self.set_cookie(cookie, bst)
-                    # Cookie 已在 run_login_process 中自动同步到 config.json
+                    # Cookie 已在 run_login_process 中自动同步到 .env
                     # 同时更新当前 config 对象
                     self.config.cookie = cookie
                     self.config.bst = bst or ""
@@ -164,7 +164,7 @@ class BossZhipinScraper:
         1. 用无头浏览器打开目标页面（带上已有 Cookie）
         2. 等待 JS 执行完毕，生成 __zp_stoken__ 等安全 Cookie
         3. 提取完整 Cookie 更新到 session
-        4. 同步保存到 config.json
+        4. 同步保存到 .env
 
         Args:
             target_url: 要访问的目标页面
@@ -268,12 +268,12 @@ class BossZhipinScraper:
                 self.set_cookie(new_cookie_str, old_bst)
                 self.config.cookie = new_cookie_str
 
-                # 同步到 config.json
+                # 同步到 .env
                 try:
                     save_fn = _import_save_cookie_to_config()
                     save_fn(new_cookie_str, old_bst)
                 except Exception as e:
-                    print(f"   ⚠️ 同步 config.json 失败: {e}")
+                    print(f"   ⚠️ 同步 .env 失败: {e}")
 
                 if has_stoken:
                     print("   ✅ 安全验证通过，Cookie 已更新\n")
@@ -361,7 +361,7 @@ class BossZhipinScraper:
             return False
 
     def _close_browser_session(self):
-        """关闭浏览器会话，并将最新 Cookie 同步回 session 和 config.json。"""
+        """关闭浏览器会话，并将最新 Cookie 同步回 session 和 .env。"""
         try:
             if self._pw_context:
                 all_cookies = self._pw_context.cookies()
@@ -858,8 +858,10 @@ class BossZhipinScraper:
             jobs_data = json.load(f)
 
         jobs = []
+        allowed_fields = set(JobDetail.__dataclass_fields__.keys())
         for data in jobs_data:
-            job = JobDetail(**data)
+            payload = {k: v for k, v in data.items() if k in allowed_fields}
+            job = JobDetail(**payload)
             jobs.append(job)
 
         print(f"📂 从 {filepath} 加载了 {len(jobs)} 个职位")

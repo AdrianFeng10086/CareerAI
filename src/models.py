@@ -6,6 +6,8 @@ from dataclasses import dataclass, field, asdict
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 import json
+import re
+from urllib.parse import urlencode
 
 
 @dataclass
@@ -28,12 +30,8 @@ class JobDetail:
     company_name: str = ""              # 公司名称
     company_scale: str = ""             # 公司规模
     industry: str = ""                  # 行业
-    security_id: str = ""               # 安全ID (用于打招呼)
-    encrypt_boss_id: str = ""           # 加密Boss ID
-    encrypt_brand_id: str = ""          # 加密品牌ID
-    boss_name: str = ""                 # HR/Boss名称
-    boss_title: str = ""                # HR/Boss职位
     job_description: str = ""           # 职位描述
+    url: str = ""                       # 招聘链接
     address: str = ""                   # 详细地址
     scraped_at: str = ""                # 爬取时间
 
@@ -63,14 +61,38 @@ class JobDetail:
             company_name=data.get("brandName", ""),
             company_scale=data.get("brandScaleName", ""),
             industry=data.get("brandIndustry", "") or data.get("industry", ""),
-            security_id=data.get("securityId", ""),
-            encrypt_boss_id=data.get("encryptBossId", ""),
-            encrypt_brand_id=data.get("encryptBrandId", ""),
-            boss_name=data.get("bossName", ""),
-            boss_title=data.get("bossTitle", ""),
             address=data.get("address", ""),
+            url=cls._build_job_url(data),
             scraped_at=datetime.now().isoformat(),
         )
+
+    @staticmethod
+    def _build_job_url(data: dict) -> str:
+        existing = (
+            str(data.get("jobUrl", "") or "").strip()
+            or str(data.get("postUrl", "") or "").strip()
+            or str(data.get("jobHref", "") or "").strip()
+            or str(data.get("href", "") or "").strip()
+        )
+        job_id = str(data.get("encryptJobId", "") or "").strip()
+        security_id = str(data.get("securityId", "") or "").strip()
+        ka_value = str(data.get("ka", "") or "").strip()
+
+        if existing and "job_detail" in existing and ("securityId=" in existing or not security_id):
+            return existing
+
+        if not job_id:
+            return existing
+
+        base = f"https://www.zhipin.com/job_detail/{job_id}.html"
+        params: Dict[str, str] = {}
+        if security_id:
+            params["securityId"] = security_id
+        if ka_value:
+            params["ka"] = ka_value
+        if params:
+            return f"{base}?{urlencode(params)}"
+        return base
 
     @staticmethod
     def _parse_salary(salary_desc: str) -> tuple:
@@ -91,19 +113,72 @@ class JobDetail:
                 except ValueError:
                     months = 12
 
-            salary_part = salary_part.upper().replace("K", "").replace("元/月", "").replace("元/天", "")
+            salary_norm = salary_part.lower().replace("／", "/")
+            salary_norm = salary_norm.replace("每月", "").replace("元/月", "")
 
-            if "-" in salary_part:
-                min_str, max_str = salary_part.split("-", 1)
-                salary_min = int(float(min_str.strip()))
-                salary_max = int(float(max_str.strip()))
-            elif salary_part.strip().isdigit():
-                salary_min = salary_max = int(salary_part.strip())
+            # 统一换算到“月薪K”：时薪按 8 小时/天、21.75 天/月折算，日薪按 21.75 天/月折算
+            multiplier = 1.0
+            if "元/时" in salary_norm or "元/小时" in salary_norm:
+                multiplier = (8.0 * 21.75) / 1000.0
+            elif "元/天" in salary_norm or "元/日" in salary_norm:
+                multiplier = 21.75 / 1000.0
+
+            salary_norm = (
+                salary_norm.replace("元/时", "")
+                .replace("元/小时", "")
+                .replace("元/天", "")
+                .replace("元/日", "")
+                .replace("元", "")
+            )
+
+            # 统一分隔符，兼容 15~25k / 15至25k / 15-25k
+            salary_norm = salary_norm.replace("~", "-").replace("至", "-")
+
+            # 区间模式，支持两侧各自带单位，如 35k-50k / 1.5万-2万
+            m_range = re.search(
+                r"(\d+(?:\.\d+)?)\s*([kw万千]?)\s*-\s*(\d+(?:\.\d+)?)\s*([kw万千]?)",
+                salary_norm,
+            )
+            if m_range:
+                left = float(m_range.group(1))
+                left_unit = m_range.group(2)
+                right = float(m_range.group(3))
+                right_unit = m_range.group(4)
+                if not left_unit and right_unit:
+                    left_unit = right_unit
+                if not right_unit and left_unit:
+                    right_unit = left_unit
+                salary_min = int(JobDetail._to_k(left, left_unit) * multiplier)
+                salary_max = int(JobDetail._to_k(right, right_unit) * multiplier)
+            else:
+                m_single = re.search(r"(\d+(?:\.\d+)?)\s*([kw万千]?)", salary_norm)
+                if m_single:
+                    value = float(m_single.group(1))
+                    unit = m_single.group(2)
+                    parsed = int(JobDetail._to_k(value, unit) * multiplier)
+                    salary_min = salary_max = parsed
+
+            if salary_min > 0 and salary_max > 0 and salary_min > salary_max:
+                salary_min, salary_max = salary_max, salary_min
 
         except Exception:
             pass
 
         return salary_min, salary_max, months
+
+    @staticmethod
+    def _to_k(value: float, unit: str) -> int:
+        unit = (unit or "").lower()
+        if unit in {"w", "万"}:
+            return int(value * 10)
+        if unit in {"k", "千"}:
+            return int(value)
+        # 无单位时做容错:
+        # 1) >=1000 通常是“元”写法(如 8000-12000)，换算为 K；
+        # 2) 否则按 K 处理，兼容 8-15 这类写法。
+        if value >= 1000:
+            return int(round(value / 1000.0))
+        return int(value)
 
 
 @dataclass
@@ -145,6 +220,7 @@ class AnalysisResult:
 
 # 城市代码映射
 CITY_CODES = {
+    "全国": "100010000",
     "北京": "101010100",
     "上海": "101020100",
     "广州": "101280100",
@@ -169,7 +245,67 @@ CITY_CODES = {
     "济南": "101120100",
     "福州": "101230100",
     "昆明": "101290100",
-    "全国": "100010000",
+    "沈阳": "101070100",
+    "哈尔滨": "101050100",
+    "长春": "101060100",
+    "太原": "101100100",
+    "石家庄": "101090100",
+    "南昌": "101240100",
+    "南宁": "101300100",
+    "贵阳": "101260100",
+    "兰州": "101160100",
+    "乌鲁木齐": "101130100",
+    "呼和浩特": "101150100",
+    "海口": "101310100",
+    "宁波": "101210400",
+    "无锡": "101190200",
+    "温州": "101210700",
+    "金华": "101210900",
+    "嘉兴": "101210300",
+    "台州": "101210600",
+    "绍兴": "101210500",
+    "常州": "101191100",
+    "南通": "101190600",
+    "扬州": "101190800",
+    "徐州": "101191000",
+    "烟台": "101120500",
+    "潍坊": "101120600",
+    "临沂": "101121300",
+    "淄博": "101120300",
+    "泉州": "101230500",
+    "漳州": "101230600",
+    "莆田": "101230400",
+    "惠州": "101280300",
+    "中山": "101281700",
+    "江门": "101281100",
+    "湛江": "101281500",
+    "保定": "101090200",
+    "唐山": "101090500",
+    "邯郸": "101090600",
+    "洛阳": "101180300",
+    "南阳": "101180700",
+    "襄阳": "101200200",
+    "宜昌": "101200400",
+    "岳阳": "101250200",
+    "衡阳": "101250300",
+    "株洲": "101250400",
+    "赣州": "101240700",
+    "九江": "101240200",
+    "芜湖": "101220300",
+    "马鞍山": "101220400",
+    "桂林": "101300300",
+    "柳州": "101300400",
+    "三亚": "101310200",
+    "泸州": "101270300",
+    "绵阳": "101270400",
+    "南充": "101270600",
+    "遵义": "101260300",
+    "咸阳": "101110200",
+    "宝鸡": "101110300",
+    "榆林": "101110400",
+    "银川": "101170100",
+    "西宁": "101140100",
+    "拉萨": "101140200"
 }
 
 # 经验代码映射
@@ -177,11 +313,17 @@ EXPERIENCE_CODES = {
     "不限": "",
     "在校生": "108",
     "应届生": "102",
+    "经验不限": "101",
+    "1年以内": "103",
     "一年以内": "103",
     "1-3年": "104",
+    "一到三年": "104",
     "3-5年": "105",
+    "三到五年": "105",
     "5-10年": "106",
+    "五到十年": "106",
     "10年以上": "107",
+    "十年以上": "107",
 }
 
 # 学历代码映射

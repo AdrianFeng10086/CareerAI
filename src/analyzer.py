@@ -87,8 +87,9 @@ class JobAnalyzer:
         exp_counter = Counter()
         industry_counter = Counter()
 
-        min_salaries: List[int] = []
-        max_salaries: List[int] = []
+        min_salaries: List[float] = []
+        max_salaries: List[float] = []
+        monthly_salaries: List[float] = []
         annual_salaries: List[float] = []
         salary_ranges = Counter()
 
@@ -108,10 +109,23 @@ class JobAnalyzer:
                 industry_counter[job.industry] += 1
 
             if job.salary_min > 0 and job.salary_max > 0:
-                min_salaries.append(job.salary_min)
-                max_salaries.append(job.salary_max)
-                avg_sal = (job.salary_min + job.salary_max) / 2
-                annual_salaries.append(avg_sal * job.salary_months)
+                salary_min = self._normalize_salary_k(job.salary_min)
+                salary_max = self._normalize_salary_k(job.salary_max)
+                if salary_min <= 0 or salary_max <= 0:
+                    continue
+                if salary_min > salary_max:
+                    salary_min, salary_max = salary_max, salary_min
+
+                avg_sal = (salary_min + salary_max) / 2.0
+                # 过滤明显异常值，避免历史脏数据拉高统计结果。
+                if avg_sal < 0.5 or avg_sal > 200:
+                    continue
+
+                months = self._normalize_salary_months(job.salary_months)
+                min_salaries.append(salary_min)
+                max_salaries.append(salary_max)
+                monthly_salaries.append(avg_sal)
+                annual_salaries.append(avg_sal * months)
 
                 if avg_sal < 5:
                     salary_ranges["<5K"] += 1
@@ -128,62 +142,116 @@ class JobAnalyzer:
                 else:
                     salary_ranges["50K+"] += 1
 
-        salary_summary = self._build_salary_summary(min_salaries, max_salaries, annual_salaries, salary_ranges)
+        salary_summary = self._build_salary_summary(
+            min_salaries=min_salaries,
+            max_salaries=max_salaries,
+            monthly_salaries=monthly_salaries,
+            annual_salaries=annual_salaries,
+            salary_ranges=salary_ranges,
+        )
         return salary_summary, skill_counter, location_counter, edu_counter, exp_counter, industry_counter
+
+    @staticmethod
+    def _normalize_salary_k(value: Any) -> float:
+        """将薪资统一到月薪K，并对历史异常值做兼容修正。"""
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            return 0.0
+        if v <= 0:
+            return 0.0
+        # 兼容旧数据: 若误把“元”当“K”存入(如 8000/12000)，在统计阶段回退到 K。
+        if v > 500:
+            v = v / 1000.0
+        return v
+
+    @staticmethod
+    def _normalize_salary_months(value: Any) -> int:
+        """薪资月数容错: 默认12，限制在合理区间。"""
+        try:
+            months = int(value)
+        except (TypeError, ValueError):
+            months = 12
+        if months < 6:
+            return 12
+        if months > 24:
+            return 24
+        return months
 
     def _build_salary_summary(
         self,
-        min_salaries: List[int],
-        max_salaries: List[int],
+        min_salaries: List[float],
+        max_salaries: List[float],
+        monthly_salaries: List[float],
         annual_salaries: List[float],
         salary_ranges: Counter,
     ) -> Dict[str, Any]:
         """根据聚合后的薪资数据计算汇总结果。"""
-        if not min_salaries or not max_salaries:
+        if not min_salaries or not max_salaries or not monthly_salaries:
             return {"error": "无有效薪资数据"}
 
-        min_sorted = sorted(min_salaries)
-        max_sorted = sorted(max_salaries)
-        avg_min = sum(min_salaries) / len(min_salaries)
-        avg_max = sum(max_salaries) / len(max_salaries)
+        # 定义A: 整体平均月薪 μ = mean((L_i + H_i)/2)
+        sample_count = len(monthly_salaries)
+        avg_monthly = sum(monthly_salaries) / sample_count
+
+        # 定义B: 典型薪资范围(统计学推荐): (μ-σ) ~ (μ+σ)
+        variance = sum((x - avg_monthly) ** 2 for x in monthly_salaries) / sample_count
+        salary_std = variance ** 0.5
+        typical_min = max(0.0, avg_monthly - salary_std)
+        typical_max = max(typical_min, avg_monthly + salary_std)
+
+        monthly_sorted = sorted(monthly_salaries)
+        median_monthly = monthly_sorted[sample_count // 2]
         avg_annual = sum(annual_salaries) / len(annual_salaries) if annual_salaries else 0
+        raw_min = min(min_salaries)
+        raw_max = max(max_salaries)
 
         return {
-            "valid_count": len(min_salaries),
-            "avg_min_salary_k": round(avg_min, 1),
-            "avg_max_salary_k": round(avg_max, 1),
-            "median_min_salary_k": min_sorted[len(min_sorted) // 2],
-            "median_max_salary_k": max_sorted[len(max_sorted) // 2],
-            "min_salary_k": min(min_salaries),
-            "max_salary_k": max(max_salaries),
+            "valid_count": sample_count,
+            # 兼容旧前端字段: 这里返回典型范围(μ±σ)，用于减少极端值影响。
+            "avg_min_salary_k": round(typical_min, 1),
+            "avg_max_salary_k": round(typical_max, 1),
+            "avg_monthly_salary_k": round(avg_monthly, 1),
+            "salary_std_k": round(salary_std, 1),
+            "median_min_salary_k": round(median_monthly, 1),
+            "median_max_salary_k": round(median_monthly, 1),
+            # 页面“薪资范围”改为典型范围，原始极值单独保留供调试。
+            "min_salary_k": round(typical_min, 1),
+            "max_salary_k": round(typical_max, 1),
+            "raw_min_salary_k": round(raw_min, 1),
+            "raw_max_salary_k": round(raw_max, 1),
             "avg_annual_salary_k": round(avg_annual, 1),
             "salary_distribution": dict(salary_ranges.most_common()),
         }
 
     def _analyze_salary(self, jobs: List[JobDetail]) -> Dict[str, Any]:
         """薪资统计分析"""
-        valid_jobs = [j for j in jobs if j.salary_min > 0 and j.salary_max > 0]
-        if not valid_jobs:
-            return {"error": "无有效薪资数据"}
-
-        min_salaries = [j.salary_min for j in valid_jobs]
-        max_salaries = [j.salary_max for j in valid_jobs]
-        avg_min = sum(min_salaries) / len(min_salaries)
-        avg_max = sum(max_salaries) / len(max_salaries)
-
-        # 年薪计算 (考虑月数)
-        annual_salaries = []
-        for j in valid_jobs:
-            avg_monthly = (j.salary_min + j.salary_max) / 2
-            annual = avg_monthly * j.salary_months
-            annual_salaries.append(annual)
-
-        avg_annual = sum(annual_salaries) / len(annual_salaries)
-
-        # 薪资区间分布
+        min_salaries: List[float] = []
+        max_salaries: List[float] = []
+        monthly_salaries: List[float] = []
+        annual_salaries: List[float] = []
         salary_ranges = Counter()
-        for j in valid_jobs:
-            avg_sal = (j.salary_min + j.salary_max) / 2
+
+        for job in jobs:
+            if job.salary_min <= 0 or job.salary_max <= 0:
+                continue
+            salary_min = self._normalize_salary_k(job.salary_min)
+            salary_max = self._normalize_salary_k(job.salary_max)
+            if salary_min <= 0 or salary_max <= 0:
+                continue
+            if salary_min > salary_max:
+                salary_min, salary_max = salary_max, salary_min
+
+            avg_sal = (salary_min + salary_max) / 2.0
+            if avg_sal < 0.5 or avg_sal > 200:
+                continue
+
+            months = self._normalize_salary_months(job.salary_months)
+            min_salaries.append(salary_min)
+            max_salaries.append(salary_max)
+            monthly_salaries.append(avg_sal)
+            annual_salaries.append(avg_sal * months)
+
             if avg_sal < 5:
                 salary_ranges["<5K"] += 1
             elif avg_sal < 10:
@@ -199,17 +267,16 @@ class JobAnalyzer:
             else:
                 salary_ranges["50K+"] += 1
 
-        return {
-            "valid_count": len(valid_jobs),
-            "avg_min_salary_k": round(avg_min, 1),
-            "avg_max_salary_k": round(avg_max, 1),
-            "median_min_salary_k": sorted(min_salaries)[len(min_salaries) // 2],
-            "median_max_salary_k": sorted(max_salaries)[len(max_salaries) // 2],
-            "min_salary_k": min(min_salaries),
-            "max_salary_k": max(max_salaries),
-            "avg_annual_salary_k": round(avg_annual, 1),
-            "salary_distribution": dict(salary_ranges.most_common()),
-        }
+        if not monthly_salaries:
+            return {"error": "无有效薪资数据"}
+
+        return self._build_salary_summary(
+            min_salaries=min_salaries,
+            max_salaries=max_salaries,
+            monthly_salaries=monthly_salaries,
+            annual_salaries=annual_salaries,
+            salary_ranges=salary_ranges,
+        )
 
     def _analyze_skills(self, jobs: List[JobDetail]) -> Dict[str, int]:
         """技能需求分析"""
@@ -301,9 +368,10 @@ class JobAnalyzer:
 - 分析时间: {result.analyzed_at}
 
 ## 薪资统计
-- 平均薪资范围: {salary.get('avg_min_salary_k', 'N/A')}K - {salary.get('avg_max_salary_k', 'N/A')}K/月
-- 中位数薪资: {salary.get('median_min_salary_k', 'N/A')}K - {salary.get('median_max_salary_k', 'N/A')}K/月
-- 薪资极值: {salary.get('min_salary_k', 'N/A')}K - {salary.get('max_salary_k', 'N/A')}K/月
+- 平均月薪(μ): {salary.get('avg_monthly_salary_k', 'N/A')}K/月
+- 典型薪资范围(μ±σ): {salary.get('avg_min_salary_k', 'N/A')}K - {salary.get('avg_max_salary_k', 'N/A')}K/月
+- 中位月薪: {salary.get('median_min_salary_k', 'N/A')}K/月
+- 薪资范围(典型): {salary.get('min_salary_k', 'N/A')}K - {salary.get('max_salary_k', 'N/A')}K/月
 - 平均年薪: {salary.get('avg_annual_salary_k', 'N/A')}K
 - 薪资分布: {json.dumps(salary.get('salary_distribution', {}), ensure_ascii=False)}
 
@@ -454,9 +522,10 @@ class JobAnalyzer:
         # 薪资分析
         lines.append("## 💰 薪资分析\n")
         if salary and "error" not in salary:
-            lines.append(f"- **平均薪资**: {salary.get('avg_min_salary_k', '?')}K - {salary.get('avg_max_salary_k', '?')}K/月")
-            lines.append(f"- **中位数薪资**: {salary.get('median_min_salary_k', '?')}K - {salary.get('median_max_salary_k', '?')}K/月")
-            lines.append(f"- **薪资范围**: {salary.get('min_salary_k', '?')}K - {salary.get('max_salary_k', '?')}K/月")
+            lines.append(f"- **平均月薪(μ)**: {salary.get('avg_monthly_salary_k', '?')}K/月")
+            lines.append(f"- **典型范围(μ±σ)**: {salary.get('avg_min_salary_k', '?')}K - {salary.get('avg_max_salary_k', '?')}K/月")
+            lines.append(f"- **中位月薪**: {salary.get('median_min_salary_k', '?')}K/月")
+            lines.append(f"- **薪资范围(典型)**: {salary.get('min_salary_k', '?')}K - {salary.get('max_salary_k', '?')}K/月")
             lines.append(f"- **预计平均年薪**: {salary.get('avg_annual_salary_k', '?')}K\n")
 
             dist = salary.get("salary_distribution", {})
@@ -540,7 +609,7 @@ class JobAnalyzer:
                 lines.append(f"- 你的目标: {', '.join(user_profile['goals'][:3])}，建议拆解为 2-4 周可执行任务，逐步达成。")
         lines.append("")
         lines.append("> 💡 配置 AI API Key (如 OpenAI) 可以获得更深度的个性化分析建议")
-        lines.append(f"> 设置环境变量 `AI_API_KEY` 或在 config.json 中配置")
+        lines.append(f"> 设置环境变量 `AI_API_KEY` 或在项目根目录的 .env 中配置")
 
         return "\n".join(lines)
 

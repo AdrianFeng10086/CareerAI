@@ -308,6 +308,7 @@ def build_interview_feedback(
     answered = len(records)
     complete_count = sum(1 for r in records if r.get("status") == "complete")
     incomplete_count = answered - complete_count
+    timeout_count = sum(1 for r in records if r.get("timed_out") is True)
     deep_total = sum(1 for q in questions if q.get("is_deep"))
     deep_complete = sum(
         1
@@ -322,10 +323,21 @@ def build_interview_feedback(
         "answered_questions": answered,
         "complete_answers": complete_count,
         "incomplete_answers": incomplete_count,
+        "timeout_questions": timeout_count,
         "deep_questions": deep_total,
         "deep_complete": deep_complete,
         "average_score": avg_score,
     }
+
+    base_gaps = [
+        "部分问题回答不完整，存在关键信息遗漏",
+        "深度问题可以补充更多数据和复盘细节",
+    ]
+    if timeout_count > 0:
+        base_gaps.insert(
+            0,
+            f"有 {timeout_count} 题在 5 分钟作答时间内未完成提交，影响整体表现与得分",
+        )
 
     default_feedback = {
         "summary": summary,
@@ -334,10 +346,7 @@ def build_interview_feedback(
             "能够结合经历进行说明",
             "具备一定岗位匹配意识",
         ],
-        "gaps": [
-            "部分问题回答不完整，存在关键信息遗漏",
-            "深度问题可以补充更多数据和复盘细节",
-        ],
+        "gaps": base_gaps,
         "action_items": [
             "用 STAR 结构重写关键项目回答",
             "每题按“小问题清单”逐项覆盖再作答",
@@ -353,6 +362,8 @@ def build_interview_feedback(
         "请根据以下模拟面试结果给出反馈。"
         "输出 JSON: {\"overall_comment\": str, \"strengths\": [str], \"gaps\": [str], \"action_items\": [str]}。"
         "每个数组给3条，简洁可执行。"
+        "若 timeout_questions 大于 0，请在 gaps 中明确指出超时未答的问题，"
+        "并在 action_items 中给出针对作答时间管理的具体建议。"
         f"目标岗位: {target_role}\n"
         f"统计: {json.dumps(summary, ensure_ascii=False)}\n"
         f"逐题记录: {json.dumps(records, ensure_ascii=False)[:7000]}"

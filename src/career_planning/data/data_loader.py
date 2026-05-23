@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-import sqlite3
 from typing import Dict, List, Tuple
 
 import pandas as pd
@@ -18,6 +17,7 @@ COLUMN_ALIASES: Dict[str, List[str]] = {
     "job_code": ["职位编码", "岗位编码", "job_code"],
     "description": ["职位描述", "岗位描述", "职责描述", "description"],
     "company_desc": ["公司简介", "企业简介", "company_desc"],
+    "url": ["招聘链接", "职位链接", "岗位链接", "网址", "url"],
 }
 
 SCRAPER_JSON_FIELD_MAP: Dict[str, str] = {
@@ -29,6 +29,9 @@ SCRAPER_JSON_FIELD_MAP: Dict[str, str] = {
     "company_scale": "company_size",
     "job_id": "job_code",
     "job_description": "description",
+    "job_href": "url",
+    "job_url": "url",
+    "url": "url",
 }
 
 
@@ -85,30 +88,9 @@ def _looks_like_scraper_json(df: pd.DataFrame) -> bool:
     return required.issubset(set(df.columns))
 
 
-def locate_sqlite_dataset(data_dir: Path) -> Path | None:
-    candidates = (
-        sorted(data_dir.glob("*.db"))
-        + sorted(data_dir.glob("*.sqlite"))
-        + sorted(data_dir.glob("*.sqlite3"))
-    )
-    if not candidates:
-        return None
-
-    preferred = [p for p in candidates if p.stem.lower() in {"jobs", "career_jobs", "job_data"}]
-    return preferred[0] if preferred else candidates[0]
-
-
-def _pick_sqlite_table(conn: sqlite3.Connection) -> str:
-    tables_df = pd.read_sql_query(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
-        conn,
-    )
-    tables = tables_df["name"].astype(str).tolist()
-    if not tables:
-        raise ValueError("SQLite 文件中没有可用的数据表")
-    if "jobs" in tables:
-        return "jobs"
-    return tables[0]
+def locate_vector_dataset(data_dir: Path) -> Path | None:
+    candidate = data_dir / "career_jobs_vector_db"
+    return candidate if candidate.exists() and candidate.is_dir() else None
 
 
 def locate_dataset(data_dir: Path) -> Path:
@@ -142,34 +124,50 @@ def _load_jobs_from_json(json_path: Path) -> pd.DataFrame:
     return _normalize_jobs_df(df)
 
 
+def _load_jobs_from_vector_store(data_dir: Path) -> pd.DataFrame:
+    try:
+        from src.career_job_store import load_all_jobs_from_vector_store
+    except Exception:
+        from career_job_store import load_all_jobs_from_vector_store
+
+    rows = load_all_jobs_from_vector_store(data_dir, limit=50000)
+    if not rows:
+        raise ValueError("向量数据库中暂无岗位数据")
+
+    df = pd.DataFrame(rows)
+    return _from_scraper_json_df(df)
+
+
 def convert_excel_to_sqlite(
     data_dir: Path,
     db_name: str = "jobs.db",
     table_name: str = "jobs",
 ) -> Tuple[Path, int]:
+    # Backward compatibility: keep function name, but export as JSON dataset.
+    del table_name
     dataset_path = locate_dataset(data_dir)
     df = pd.read_excel(dataset_path)
     jobs_df = _normalize_jobs_df(df)
 
-    db_path = data_dir / db_name
-    with sqlite3.connect(db_path) as conn:
-        jobs_df.to_sql(table_name, conn, if_exists="replace", index=False)
+    output_name = Path(db_name).with_suffix(".json").name
+    out_path = data_dir / output_name
+    jobs_df.to_json(out_path, orient="records", force_ascii=False)
 
-    return db_path, int(len(jobs_df))
+    return out_path, int(len(jobs_df))
 
 
-def load_jobs_dataframe(data_dir: Path) -> Tuple[pd.DataFrame, Path]:
-    sqlite_path = locate_sqlite_dataset(data_dir)
-    if sqlite_path and sqlite_path.exists():
-        with sqlite3.connect(sqlite_path) as conn:
-            table_name = _pick_sqlite_table(conn)
-            df = pd.read_sql_query(f"SELECT * FROM [{table_name}]", conn)
-        return _normalize_jobs_df(df), sqlite_path
+def load_jobs_dataframe(data_dir: Path) -> pd.DataFrame:
+    vector_path = locate_vector_dataset(data_dir)
+    if vector_path:
+        try:
+            return _load_jobs_from_vector_store(data_dir)
+        except Exception:
+            pass
 
     json_path = locate_scraper_json_dataset(data_dir)
     if json_path and json_path.exists():
-        return _load_jobs_from_json(json_path), json_path
+        return _load_jobs_from_json(json_path)
 
     dataset_path = locate_dataset(data_dir)
     df = pd.read_excel(dataset_path)
-    return _normalize_jobs_df(df), dataset_path
+    return _normalize_jobs_df(df)

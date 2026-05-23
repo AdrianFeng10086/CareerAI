@@ -1,9 +1,21 @@
 from __future__ import annotations
 
-import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
+
+from src.env_file import load_env
+
+
+_ENV_LOADED = False
+
+
+def _ensure_env_loaded() -> None:
+    global _ENV_LOADED
+    if _ENV_LOADED:
+        return
+    load_env(override=False)
+    _ENV_LOADED = True
 
 
 @dataclass
@@ -26,32 +38,21 @@ def _to_bool(value: str) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
-def load_settings(base_dir: Path) -> Settings:
-    config_path = base_dir / "config.json"
-    data = {}
-    if config_path.exists():
-        try:
-            data = json.loads(config_path.read_text(encoding="utf-8"))
-        except Exception:
-            data = {}
+def load_settings(_base_dir: Path | None = None) -> Settings:
+    """从 .env 与进程环境变量加载 Settings。
 
-    settings = Settings(
-        app_host=str(data.get("app_host", "127.0.0.1")),
-        app_port=int(data.get("app_port", 5050)),
-        app_debug=bool(data.get("app_debug", True)),
-        data_dir=str(data.get("data_dir", "data")),
-        output_dir=str(data.get("output_dir", "output")),
-        llm_api_key=str(data.get("openai_api_key", "")),
-        llm_base_url=str(data.get("openai_base_url", "https://api.openai.com/v1")),
-        llm_model=str(data.get("openai_model", "gpt-4o-mini")),
-        export_default_format=str(data.get("export_default_format", "pdf")).lower(),
-    )
+    `_base_dir` 仅为兼容旧调用签名,不再使用。
+    """
+    _ensure_env_loaded()
+    settings = Settings()
 
-    # Environment variables override config file values.
     if os.getenv("APP_HOST"):
         settings.app_host = str(os.getenv("APP_HOST", settings.app_host))
     if os.getenv("APP_PORT"):
-        settings.app_port = int(os.getenv("APP_PORT", str(settings.app_port)))
+        try:
+            settings.app_port = int(os.getenv("APP_PORT", str(settings.app_port)))
+        except Exception:
+            pass
     if os.getenv("APP_DEBUG"):
         settings.app_debug = _to_bool(os.getenv("APP_DEBUG", ""))
 
@@ -60,12 +61,16 @@ def load_settings(base_dir: Path) -> Settings:
     if os.getenv("OUTPUT_DIR"):
         settings.output_dir = str(os.getenv("OUTPUT_DIR", settings.output_dir))
 
-    if os.getenv("OPENAI_API_KEY"):
-        settings.llm_api_key = str(os.getenv("OPENAI_API_KEY", settings.llm_api_key))
-    if os.getenv("OPENAI_BASE_URL"):
-        settings.llm_base_url = str(os.getenv("OPENAI_BASE_URL", settings.llm_base_url))
-    if os.getenv("OPENAI_MODEL"):
-        settings.llm_model = str(os.getenv("OPENAI_MODEL", settings.llm_model))
+    # 与主 Config 共用 AI 密钥/Base/Model;同时兼容历史的 OPENAI_* 变量
+    api_key = os.getenv("AI_API_KEY") or os.getenv("OPENAI_API_KEY")
+    if api_key:
+        settings.llm_api_key = api_key
+    base_url = os.getenv("AI_BASE_URL") or os.getenv("OPENAI_BASE_URL")
+    if base_url:
+        settings.llm_base_url = base_url
+    model = os.getenv("AI_MODEL") or os.getenv("OPENAI_MODEL")
+    if model:
+        settings.llm_model = model
 
     if os.getenv("EXPORT_DEFAULT_FORMAT"):
         settings.export_default_format = str(

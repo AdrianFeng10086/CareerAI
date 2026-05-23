@@ -1,6 +1,7 @@
 # 职探AI 依赖
 requests>=2.31.0
 pycryptodome>=3.19.0
+python-dotenv>=1.0.0
 Flask>=3.0.0
 Markdown>=3.7
 reportlab>=4.2.0
@@ -10,3 +11,14 @@ openpyxl>=3.1.2
 pypdf>=4.3.0
 python-docx>=1.1.2
 weasyprint>=62.3
+chromadb>=0.5.23
+sentence-transformers>=3.0.1
+fastmcp>=2.13.0
+playwright>=1.40.0
+uvicorn>=0.27.0
+starlette>=0.36.0
+torch>=2.11.0
+transformers>=4.30.0
+faiss-cpu>=1.7.4
+opencv-python>=4.8.0
+mediapipe>=0.10.0

@@ -22,6 +22,35 @@ class ReportGenerator:
     def __init__(self, config: Config):
         self.config = config
 
+    def _has_resume_profile(self, user_profile: Optional[Dict[str, Any]]) -> bool:
+        """判断是否提供了可用于雷达图的人物画像信息。"""
+        profile = user_profile or {}
+        if not profile:
+            return False
+
+        # 仅有目标城市/岗位或零散备注时，不认为是简历输入。
+        meaningful_keys = [
+            "years_of_experience",
+            "education_level",
+            "research_focus",
+            "projects",
+            "achievements",
+            "tech_stack",
+            "goals",
+            "strengths",
+            "concerns",
+            "personal_strengths_summary",
+        ]
+        for key in meaningful_keys:
+            value = profile.get(key)
+            if isinstance(value, list) and value:
+                return True
+            if isinstance(value, str) and value.strip():
+                return True
+            if value not in (None, "", [], {}, ()):  # 包含数字等类型
+                return True
+        return False
+
     def generate_markdown(self, result: AnalysisResult, jobs: List[JobDetail],
                           save: bool = True) -> str:
         """
@@ -62,8 +91,9 @@ class ReportGenerator:
             if len(job.skills) > 4:
                 skills_str += "..."
             location = f"{job.city_name}/{job.area_district}" if job.area_district else job.city_name
+            title_md = f"[{job.job_name}]({job.url})" if job.url else job.job_name
             lines.append(
-                f"| {i} | {job.job_name} | {job.company_name} | {job.salary_desc} | "
+                f"| {i} | {title_md} | {job.company_name} | {job.salary_desc} | "
                 f"{location} | {job.experience} | {job.education} | {skills_str} |"
             )
 
@@ -100,9 +130,10 @@ class ReportGenerator:
         lines.append("  💰 薪资概览")
         lines.append("  " + "-" * 40)
         if salary and "error" not in salary:
-            lines.append(f"  平均薪资: {salary.get('avg_min_salary_k', '?')}K - {salary.get('avg_max_salary_k', '?')}K/月")
-            lines.append(f"  中位数:   {salary.get('median_min_salary_k', '?')}K - {salary.get('median_max_salary_k', '?')}K/月")
-            lines.append(f"  范围:     {salary.get('min_salary_k', '?')}K - {salary.get('max_salary_k', '?')}K/月")
+            lines.append(f"  平均月薪(μ): {salary.get('avg_monthly_salary_k', '?')}K/月")
+            lines.append(f"  典型范围(μ±σ): {salary.get('avg_min_salary_k', '?')}K - {salary.get('avg_max_salary_k', '?')}K/月")
+            lines.append(f"  中位月薪: {salary.get('median_min_salary_k', '?')}K/月")
+            lines.append(f"  薪资范围(典型): {salary.get('min_salary_k', '?')}K - {salary.get('max_salary_k', '?')}K/月")
             lines.append(f"  预计年薪: {salary.get('avg_annual_salary_k', '?')}K")
 
         # Top 技能
@@ -136,8 +167,13 @@ class ReportGenerator:
         print(text)
         return text
 
-    def generate_html(self, result: AnalysisResult, jobs: List[JobDetail],
-                      save: bool = True) -> str:
+    def generate_html(
+        self,
+        result: AnalysisResult,
+        jobs: List[JobDetail],
+        save: bool = True,
+        report_stem: Optional[str] = None,
+    ) -> str:
         """
         生成 HTML 格式的可视化报告
 
@@ -159,8 +195,8 @@ class ReportGenerator:
         sal_labels = json.dumps(list(sal_dist.keys()), ensure_ascii=False)
         sal_values = json.dumps(list(sal_dist.values()))
 
-        # 六边形竞争力图（雷达）
         user_profile = result.user_profile or {}
+        show_radar = self._has_resume_profile(user_profile)
         total_jobs = max(1, int(result.total_jobs or 0))
         skills_n = len(result.skill_summary or {})
         goals_n = len(user_profile.get("goals", []))
@@ -179,16 +215,59 @@ class ReportGenerator:
 
         radar_labels = json.dumps(["Skill", "Salary", "ExpFit", "EduFit", "Heat", "Goal"])
         radar_values = json.dumps([skill_match, salary_comp, exp_fit, edu_fit, market_heat, clarity])
+        radar_card_html = ""
+        radar_script = ""
+        if show_radar:
+            radar_card_html = """
+        <div class="card">
+            <h2>🧭 六边形竞争力图</h2>
+            <div class="chart-container">
+                <canvas id="radarChart"></canvas>
+            </div>
+        </div>
+            """
+            radar_script = f"""
+// 六边形竞争力图
+new Chart(document.getElementById('radarChart'), {{
+    type: 'radar',
+    data: {{
+        labels: {radar_labels},
+        datasets: [{{
+            label: '竞争力评分',
+            data: {radar_values},
+            backgroundColor: 'rgba(47, 111, 182, 0.25)',
+            borderColor: 'rgba(47, 111, 182, 0.95)',
+            borderWidth: 2,
+            pointBackgroundColor: 'rgba(47, 111, 182, 0.95)'
+        }}]
+    }},
+    options: {{
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {{
+            r: {{
+                suggestedMin: 0,
+                suggestedMax: 100,
+                ticks: {{ stepSize: 20 }}
+            }}
+        }}
+    }}
+}});
+            """
 
         # 职位表格
         job_rows = ""
         for i, job in enumerate(jobs, 1):
             skills_str = ", ".join(job.skills[:4])
             location = f"{job.city_name}/{job.area_district}" if job.area_district else job.city_name
+            title_html = html.escape(job.job_name or "")
+            if job.url:
+                safe_url = html.escape(job.url, quote=True)
+                title_html = f'<a href="{safe_url}" target="_blank" rel="noopener noreferrer">{title_html}</a>'
             job_rows += f"""
             <tr>
                 <td>{i}</td>
-                <td>{job.job_name}</td>
+                <td>{title_html}</td>
                 <td>{job.company_name}</td>
                 <td><strong>{job.salary_desc}</strong></td>
                 <td>{location}</td>
@@ -210,7 +289,7 @@ class ReportGenerator:
             except Exception:
                 ai_html = html.escape(result.ai_insights).replace("\n", "<br>")
 
-        html = f"""<!DOCTYPE html>
+        html_content = f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
@@ -260,12 +339,12 @@ class ReportGenerator:
         <h2>💰 薪资概览</h2>
         <div class="stats-grid">
             <div class="stat-item">
-                <div class="value">{salary.get('avg_min_salary_k', '?')}K-{salary.get('avg_max_salary_k', '?')}K</div>
+                <div class="value">{salary.get('avg_monthly_salary_k', '?')}K</div>
                 <div class="label">平均月薪</div>
             </div>
             <div class="stat-item">
-                <div class="value">{salary.get('median_min_salary_k', '?')}K-{salary.get('median_max_salary_k', '?')}K</div>
-                <div class="label">中位数月薪</div>
+                <div class="value">{salary.get('avg_min_salary_k', '?')}K-{salary.get('avg_max_salary_k', '?')}K</div>
+                <div class="label">典型薪资范围(μ±σ)</div>
             </div>
             <div class="stat-item">
                 <div class="value">{salary.get('avg_annual_salary_k', '?')}K</div>
@@ -304,12 +383,7 @@ class ReportGenerator:
                 <canvas id="eduChart"></canvas>
             </div>
         </div>
-        <div class="card">
-            <h2>🧭 六边形竞争力图</h2>
-            <div class="chart-container">
-                <canvas id="radarChart"></canvas>
-            </div>
-        </div>
+        {radar_card_html}
     </div>
 
     <!-- AI 分析 -->
@@ -370,42 +444,16 @@ new Chart(document.getElementById('eduChart'), {{
     }},
     options: {{ responsive: true, maintainAspectRatio: false }}
 }});
-
-// 六边形竞争力图
-new Chart(document.getElementById('radarChart'), {{
-    type: 'radar',
-    data: {{
-        labels: {radar_labels},
-        datasets: [{{
-            label: '竞争力评分',
-            data: {radar_values},
-            backgroundColor: 'rgba(47, 111, 182, 0.25)',
-            borderColor: 'rgba(47, 111, 182, 0.95)',
-            borderWidth: 2,
-            pointBackgroundColor: 'rgba(47, 111, 182, 0.95)'
-        }}]
-    }},
-    options: {{
-        responsive: true,
-        maintainAspectRatio: false,
-        scales: {{
-            r: {{
-                suggestedMin: 0,
-                suggestedMax: 100,
-                ticks: {{ stepSize: 20 }}
-            }}
-        }}
-    }}
-}});
+{radar_script}
 </script>
 </body>
 </html>"""
 
         if save:
-            filepath = self._save_report(html, "html")
+            filepath = self._save_report(html_content, "html", report_stem=report_stem)
             print(f"🌐 HTML 报告已保存: {filepath}")
 
-        return html
+        return html_content
 
     def generate_pdf(
         self,
@@ -413,6 +461,7 @@ new Chart(document.getElementById('radarChart'), {{
         jobs: List[JobDetail],
         save: bool = True,
         progress_callback=None,
+        report_stem: Optional[str] = None,
     ) -> str:
         """
         使用 Markdown + WeasyPrint 生成 PDF 报告。
@@ -431,11 +480,18 @@ new Chart(document.getElementById('radarChart'), {{
         except Exception as e:
             raise RuntimeError("缺少 markdown/weasyprint 依赖，请先安装: pip install Markdown weasyprint") from e
 
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filepath = self._build_output_path(f"report_{timestamp}.pdf")
+        if report_stem:
+            filepath = self._build_output_path(f"{report_stem}.pdf")
+        else:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filepath = self._build_output_path(f"report_{timestamp}.pdf")
+        show_radar = self._has_resume_profile(result.user_profile or {})
 
         step(10, "report.init", "正在准备 Markdown 内容...")
         markdown_text = self.generate_markdown(result=result, jobs=jobs, save=False)
+        markdown_text = self._strip_links_for_pdf(markdown_text)
+        if not show_radar:
+            markdown_text = self._strip_mermaid_radar_blocks(markdown_text)
         markdown_text = self._inject_mermaid_radar_svg(markdown_text)
 
         step(45, "report.ai", "正在将 Markdown 渲染为 HTML...")
@@ -444,7 +500,7 @@ new Chart(document.getElementById('radarChart'), {{
             extensions=["extra", "tables", "fenced_code", "sane_lists", "nl2br"],
             output_format="html5",
         )
-        charts_html = self._build_weasy_charts_html(result)
+        charts_html = self._build_weasy_charts_html(result, show_radar=show_radar)
 
         css_string = """
         @page {
@@ -542,18 +598,36 @@ new Chart(document.getElementById('radarChart'), {{
             print(f"📕 PDF 报告已保存: {filepath}")
         return filepath
 
-    def _build_weasy_charts_html(self, result: AnalysisResult) -> str:
+    def _strip_links_for_pdf(self, markdown_text: str) -> str:
+        """移除 Markdown/HTML 链接，仅保留可读文本，避免 PDF 中出现可点击超链接。"""
+        text = str(markdown_text or "")
+        text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1", text)
+        text = re.sub(r"<(https?://[^>]+)>", r"\1", text)
+        text = re.sub(r"<a\s+[^>]*>(.*?)</a>", r"\1", text, flags=re.IGNORECASE | re.DOTALL)
+        return text
+
+    def _build_weasy_charts_html(self, result: AnalysisResult, show_radar: bool = True) -> str:
         skill_svg = self._build_weasy_skill_svg(result)
         salary_svg = self._build_weasy_salary_svg(result)
-        hex_svg = self._build_weasy_hexagon_svg(result)
+        cards = [
+            f"<div class=\"chart-card\"><div class=\"chart-title\">热门技能直方图</div>{skill_svg}</div>",
+            f"<div class=\"chart-card\"><div class=\"chart-title\">薪资分布图</div>{salary_svg}</div>",
+        ]
+        if show_radar:
+            hex_svg = self._build_weasy_hexagon_svg(result)
+            cards.append(f"<div class=\"chart-card\"><div class=\"chart-title\">六边形竞争力图</div>{hex_svg}</div>")
+
         return (
             "<h2>图表洞察</h2>"
             "<div class=\"chart-grid\">"
-            f"<div class=\"chart-card\"><div class=\"chart-title\">热门技能直方图</div>{skill_svg}</div>"
-            f"<div class=\"chart-card\"><div class=\"chart-title\">薪资分布图</div>{salary_svg}</div>"
-            f"<div class=\"chart-card\"><div class=\"chart-title\">六边形竞争力图</div>{hex_svg}</div>"
-            "</div>"
+            + "".join(cards)
+            + "</div>"
         )
+
+    def _strip_mermaid_radar_blocks(self, markdown_text: str) -> str:
+        """移除 Markdown 中 mermaid radar-beta 图块。"""
+        pattern = re.compile(r"```mermaid\s*\n(?=.*?radar-beta)(.*?)\n```", flags=re.IGNORECASE | re.DOTALL)
+        return pattern.sub("", str(markdown_text or ""))
 
     def _inject_mermaid_radar_svg(self, markdown_text: str) -> str:
         """将 mermaid radar-beta 代码块替换为可直接参与 WeasyPrint 渲染的 SVG。"""
@@ -1069,9 +1143,12 @@ new Chart(document.getElementById('radarChart'), {{
         normalized = normalized.replace("·", "-")
         return normalized
 
-    def _save_report(self, content: str, ext: str) -> str:
+    def _save_report(self, content: str, ext: str, report_stem: Optional[str] = None) -> str:
         """保存报告文件"""
-        filepath = self._build_output_path(f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.{ext}")
+        if report_stem:
+            filepath = self._build_output_path(f"{report_stem}.{ext}")
+        else:
+            filepath = self._build_output_path(f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.{ext}")
 
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(content)
