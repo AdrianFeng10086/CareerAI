@@ -295,13 +295,12 @@ Star 一下，下次求职时能找到。⭐
 - [OpenCV](https://opencv.org/) — 计算机视觉
 - [LangChain](https://www.langchain.com/) — LLM 应用框架
 - [Chroma](https://www.trychroma.com/) — 向量数据库
-- [Anthropic Claude](https://www.anthropic.com/) — AI 模型
 
 ---
 
 ## 联系方式
 
-- 📧 **Email** — yf2678045931@outlook.com
+- 📧 **Email** — 2678045931@qq.com
 
 
 > Bug 反馈和功能请求请用 [GitHub Issues](https://github.com/yourusername/CareerAI/issues)，更容易跟踪。
