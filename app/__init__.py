@@ -47,4 +47,8 @@ def create_app() -> Flask:
     app.register_blueprint(career.bp)
     app.register_blueprint(interview.bp)
 
+    # 后台预热 embedding 模型，避免首次用户请求时冷启动阻塞 20+s
+    from src.career_job_store import warmup_embedder
+    warmup_embedder()
+
     return app

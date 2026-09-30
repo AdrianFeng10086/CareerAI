@@ -17,6 +17,7 @@ import math
 import os
 import re
 import threading
+import time
 from contextlib import nullcontext, redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -72,6 +73,16 @@ _EMBED_MODEL_NAME = str(
     or "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 ).strip()
 _EMBED_HF_ENDPOINT = _resolve_embed_hf_endpoint()
+
+# 在 import sentence_transformers / huggingface_hub 之前就把环境变量设好，
+# 避免 hub 内部在 import 时缓存了 huggingface.co 地址导致后续网络超时。
+_apply_hf_endpoint_env()
+os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+os.environ.setdefault("TQDM_DISABLE", "1")
+if not os.getenv("HF_HUB_OFFLINE"):
+    os.environ["HF_HUB_OFFLINE"] = "1"
+
 _EMBEDDER: Any = None
 _EMBEDDER_READY = False
 _EMBEDDER_DEVICE = "cpu"
@@ -208,12 +219,15 @@ def _load_sentence_transformer() -> Any:
         if _EMBEDDER_READY:
             return _EMBEDDER
 
+        _t0 = time.perf_counter()
+        print("[RAG-PERF] _load_sentence_transformer: start", flush=True)
         try:
             torch = _get_torch_module()
             if torch is None:
                 raise RuntimeError("未检测到 torch，无法启用 sentence-transformers 嵌入")
 
             sentence_transformers = importlib.import_module("sentence_transformers")
+            print(f"[RAG-PERF] _load_sentence_transformer: import done in {time.perf_counter() - _t0:.3f}s", flush=True)
 
             requested = _resolve_requested_device()
             has_cuda = _torch_cuda_available(torch)
@@ -232,11 +246,8 @@ def _load_sentence_transformer() -> Any:
                 _maybe_enable_tf32(torch)
 
             _apply_hf_endpoint_env()
-            os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
-            os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
-            os.environ.setdefault("TQDM_DISABLE", "1")
 
-            local_files_only = _env_flag("CAREER_RAG_LOCAL_ONLY", default=False)
+            local_files_only = _env_flag("CAREER_RAG_LOCAL_ONLY", default=True)
             cache_folder = str(os.getenv("CAREER_RAG_MODEL_CACHE", "") or "").strip() or None
 
             model_cls = getattr(sentence_transformers, "SentenceTransformer")
@@ -262,6 +273,7 @@ def _load_sentence_transformer() -> Any:
                     model_kwargs.pop("model_kwargs", None)
                     with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
                         _EMBEDDER = model_cls(_EMBED_MODEL_NAME, **model_kwargs)
+            print(f"[RAG-PERF] _load_sentence_transformer: model loaded device={device} in {time.perf_counter() - _t0:.3f}s", flush=True)
 
             _EMBEDDER_DEVICE = device
             _EMBEDDER_DTYPE = cuda_dtype_name if device == "cuda" else "float32"
@@ -523,12 +535,21 @@ def _embed_texts(texts: List[str], dim: int = _VECTOR_DIM) -> List[List[float]]:
     if not unique_texts:
         return vectors_out
 
+    _t_embed_start = time.perf_counter()
     embedder = _load_sentence_transformer()
+    _t_after_load = time.perf_counter()
     if embedder is not None:
         try:
             default_bs = 256 if _EMBEDDER_DEVICE == "cuda" else 64
             batch_size = _adaptive_embed_batch_size(unique_texts, default_bs)
             dense_matrix = _encode_dense_with_backoff(embedder, unique_texts, batch_size, device=_EMBEDDER_DEVICE)
+            _t_after_encode = time.perf_counter()
+            print(
+                f"[RAG-PERF] _embed_texts: n={len(unique_texts)} bs={batch_size} device={_EMBEDDER_DEVICE} "
+                f"load={_t_after_load - _t_embed_start:.3f}s encode={_t_after_encode - _t_after_load:.3f}s "
+                f"total={_t_after_encode - _t_embed_start:.3f}s",
+                flush=True,
+            )
 
             unique_vectors: List[List[float]] = []
             for dense in dense_matrix:
@@ -551,12 +572,18 @@ def _embed_texts(texts: List[str], dim: int = _VECTOR_DIM) -> List[List[float]]:
             # 推理异常时回退哈希向量，保障线上流程不中断。
             _EMBEDDER_BACKEND = "hash-fallback"
             _EMBEDDER_ERROR = str(exc)
+            print(f"[RAG-PERF] _embed_texts: encode failed, fallback to hash. err={exc}", flush=True)
 
     fallback_vectors = [_hash_embed_text(text, dim=dim) for text in unique_texts]
     for unique_idx, text in enumerate(unique_texts):
         vector = fallback_vectors[unique_idx] if unique_idx < len(fallback_vectors) else list(empty_vector)
         for original_idx in text_to_indexes.get(text, []):
             vectors_out[original_idx] = list(vector)
+    print(
+        f"[RAG-PERF] _embed_texts: HASH-FALLBACK n={len(unique_texts)} "
+        f"total={time.perf_counter() - _t_embed_start:.3f}s",
+        flush=True,
+    )
     return vectors_out
 
 
@@ -761,7 +788,14 @@ def _fetch_candidates_by_semantic_queries(
     if not normalized_queries:
         return []
 
+    _t_fn_start = time.perf_counter()
     collection = _collection_for_data_dir(data_dir)
+    _t_after_coll = time.perf_counter()
+    print(
+        f"[RAG-PERF] _fetch_candidates_by_semantic_queries: open_collection={_t_after_coll - _t_fn_start:.3f}s "
+        f"queries={len(normalized_queries)} city={city_name!r} top_k={top_k}",
+        flush=True,
+    )
     where = {"city_name": city_name} if city_name else None
     all_rows: List[List[Dict[str, Any]]] = []
     query_batch_size = _resolve_query_batch_size(32)
@@ -780,11 +814,29 @@ def _fetch_candidates_by_semantic_queries(
         if where:
             query_kwargs["where"] = where
 
+        _t_q_start = time.perf_counter()
         try:
             result = collection.query(**query_kwargs)
-        except Exception:
+            _t_q_end = time.perf_counter()
+            print(
+                f"[RAG-PERF] collection.query: chunk={len(query_chunk)} where={where} "
+                f"took={_t_q_end - _t_q_start:.3f}s",
+                flush=True,
+            )
+        except Exception as exc:
+            print(
+                f"[RAG-PERF] collection.query: chunk={len(query_chunk)} where={where} "
+                f"failed={exc!r}, retrying without where",
+                flush=True,
+            )
             query_kwargs.pop("where", None)
+            _t_q_retry = time.perf_counter()
             result = collection.query(**query_kwargs)
+            print(
+                f"[RAG-PERF] collection.query (retry no-where): chunk={len(query_chunk)} "
+                f"took={time.perf_counter() - _t_q_retry:.3f}s",
+                flush=True,
+            )
 
         batch_metadatas = result.get("metadatas") or []
         batch_distances = result.get("distances") or []
@@ -804,6 +856,10 @@ def _fetch_candidates_by_semantic_queries(
 
             all_rows.append(rows)
 
+    print(
+        f"[RAG-PERF] _fetch_candidates_by_semantic_queries: done in {time.perf_counter() - _t_fn_start:.3f}s",
+        flush=True,
+    )
     return all_rows
 
 
@@ -1103,3 +1159,15 @@ def desensitize_existing_jobs(data_dir: Path) -> Dict[str, int]:
             collection.upsert(ids=ids, documents=new_docs, metadatas=new_metas, embeddings=new_embs)
 
     return {"total": len(ids), "updated": updated}
+
+
+def warmup_embedder() -> None:
+    """后台线程预热 embedding 模型，进程启动时调用一次即可。"""
+    def _worker() -> None:
+        try:
+            _load_sentence_transformer()
+        except Exception:
+            pass
+
+    thread = threading.Thread(target=_worker, daemon=True, name="embedder-warmup")
+    thread.start()

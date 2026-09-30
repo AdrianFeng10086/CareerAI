@@ -1,7 +1,7 @@
 # <h1 align="center">🎯 CareerAI</h1>
 
 <p align="center">
-  <strong>你的 AI 求职导航仪 — 从海量岗位到精准规划，让 AI 陪你跑通求职全链路</strong>
+  <strong>Your AI Career Navigator — From vast job listings to precise planning, let AI guide you through the entire job search journey</strong>
 </p>
 
 <p align="center">
@@ -11,300 +11,297 @@
 </p>
 
 <p align="center">
-  <a href="#为什么需要-careerai">为什么需要</a> · <a href="#快速上手">快速上手</a> · <a href="#核心能力">核心能力</a> · <a href="#架构设计">架构设计</a> · <a href="#常见问题">常见问题</a>
+  <a href="#why-careerai">Why CareerAI</a> · <a href="#quick-start">Quick Start</a> · <a href="#core-features">Core Features</a> · <a href="#architecture">Architecture</a> · <a href="#faq">FAQ</a>
 </p>
 
 ---
 
-## 为什么需要 CareerAI？
+## Why CareerAI?
 
-求职是一场信息战。你面对的问题很现实：
+Job hunting is an information war. The problems you face are real:
 
-- 📊 "这个岗位的薪资在行业里什么水平？" → **不知道**，只能靠感觉
-- 🎯 "我的背景适合哪些岗位？" → **不清楚**，海投简历效率低
-- 🧭 "我应该往哪个方向发展？" → **没思路**，职业规划全靠运气
-- 🎤 "怎么准备面试才能通过？" → **没反馈**，模拟面试没人给意见
-- 🎥 "我的面试表现怎么样？" → **看不见**，不知道自己哪里有问题
-- 💼 "这个公司的岗位要求什么技能？" → **要自己一个一个看**，太费时间
+- 📊 "What's the salary level for this position in the industry?" → **Don't know**, just guessing
+- 🎯 "Which positions fit my background?" → **Unclear**, mass applications are inefficient
+- 🧭 "Which direction should I develop my career?" → **No clue**, career planning relies on luck
+- 🎤 "How do I prepare for interviews to pass?" → **No feedback**, no one to critique mock interviews
+- 🎥 "How's my interview performance?" → **Can't see**, don't know what needs improvement
+- 💼 "What skills does this company's position require?" → **Have to check one by one**, too time-consuming
 
-**这些问题都可以用数据和 AI 来解决，但需要一个完整的系统。**
+**All these problems can be solved with data and AI, but require a complete system.**
 
-每个求职者都在重复做同样的事情——抓取岗位、分析市场、模拟面试、反思改进。这些工作本来就应该被自动化。
+Every job seeker is repeating the same tasks—scraping positions, analyzing markets, mock interviews, reflection and improvement. This work should be automated.
 
-**CareerAI 把这件事变成一个完整的闭环：**
+**CareerAI turns this into a complete loop:**
 
 ```
-抓取岗位 → 分析市场 → 匹配职位 → 模拟面试 → 反馈改进 → 精准求职
+Scrape Jobs → Market Analysis → Position Matching → Mock Interview → Feedback & Improvement → Targeted Job Search
 ```
 
-一个系统，从数据到决策，从模拟到实战。
+One system, from data to decision, from simulation to real battle.
 
-> ⭐ **Star 这个项目**，我们会持续追踪招聘市场变化、优化匹配算法、增强面试反馈能力。
+> ⭐ **Star this project**, we'll continuously track recruitment market changes, optimize matching algorithms, and enhance interview feedback capabilities.
 
-### ✅ 在你用之前，你可能想知道
+### ✅ Before you use it, you might want to know
 
 |                      |                                                              |
 | -------------------- | ------------------------------------------------------------ |
-| 💰 **完全免费**       | 所有功能开源、所有数据本地存储。不需要付费 API、不需要云服务 |
-| 🔒 **隐私安全**       | 所有数据存储在本地，不上传不外传。支持多用户隔离，求职隐私有保障 |
-| 🚀 **开箱即用**       | 一条命令启动，自动抓取 Boss 直聘数据，无需手动配置          |
-| 🤖 **AI 全程陪伴**    | 从岗位分析到面试模拟，AI 贯穿整个求职流程                   |
-| 📈 **数据驱动**       | 基于真实招聘数据的市场分析，不是凭感觉的建议                |
-| 🎥 **实时反馈**       | 面试时摄像头实时分析表情、眼神、姿态，给出综合评分           |
+| 🔒 **Privacy Secure** | All data stored locally, not uploaded or shared. Supports multi-user isolation for job search privacy |
+| 🚀 **Ready to Use** | One command to start, auto-scrapes Boss Zhipin data, no manual configuration |
+| 🤖 **AI Companion** | From position analysis to interview simulation, AI throughout the job search process |
+| 📈 **Data-Driven** | Market analysis based on real recruitment data, not guesswork advice |
+| 🎥 **Real-time Feedback** | Camera analyzes expression, eye contact, posture during interview with comprehensive scoring |
 
 ---
 
-## 核心能力
+## Core Features
 
-| 功能 | 说明 | 输出 |
+| Feature | Description | Output |
 | --- | --- | --- |
-| 🔍 **智能抓取** | 高效抓取 Boss 直聘实时岗位数据，支持关键词/城市/页数灵活配置 | 原始 JSON + 向量索引 |
-| 📊 **市场分析** | 自动统计薪资分布、技能热图、学历要求、经验偏好等多维度指标 | 结构化分析报告 |
-| 🧭 **职业规划** | 基于 RAG 技术，结合个人背景提供人岗匹配建议与行动路线 | 交互式规划报告 |
-| 🎤 **模拟面试** | 结构化 AI 面试官，8-15 题沉浸式问答，支持深度追问与专业反馈 | 面试日志 + 评估 |
-| 🎥 **神态分析** | 面试期间实时开启摄像头，追踪表情、眼神、头部姿态与综合评分 | 神态指标 + 综合评分 |
-| 👤 **账户体系** | 多用户支持，数据严格物理隔离，确保求职隐私 | 用户隔离存储 |
+| 🔍 **Smart Scraping** | Efficiently scrape Boss Zhipin real-time job data with flexible keyword/city/page configuration | Raw JSON + Vector Index |
+| 📊 **Market Analysis** | Auto-generate multi-dimensional metrics: salary distribution, skill heatmap, education requirements, experience preferences | Structured Analysis Report |
+| 🧭 **Career Planning** | RAG-based technology combining personal background for job-candidate matching suggestions and action plans | Interactive Planning Report |
+| 🎤 **Mock Interview** | Structured AI interviewer with 8-15 immersive Q&A, supports deep follow-ups and professional feedback | Interview Log + Evaluation |
+| 🎥 **Demeanor Analysis** | Real-time camera tracking during interview: expression, eye contact, head posture with comprehensive scoring | Demeanor Metrics + Score |
+| 👤 **Account System** | Multi-user support with strict data isolation ensuring job search privacy | User-isolated Storage |
 
 ---
 
-## 快速上手
+## Quick Start
 
-### 1. 环境准备
+### 1. Environment Setup
 
 - **Python 3.10+**
-- **推荐 Windows 环境**（项目包含预置 Chrome 内核，Linux/Mac 需自行配置）
+- **Windows recommended** (project includes pre-configured Chrome kernel, Linux/Mac requires manual configuration)
 
-### 2. 一键启动
+### 2. One-Command Launch
 
 ```bash
-# 克隆项目
+# Clone the project
 git clone https://github.com/yourusername/CareerAI.git
 cd CareerAI
 
-# 创建虚拟环境
+# Create virtual environment
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1  # Windows
 # source .venv/bin/activate   # Linux/Mac
 
-# 安装依赖
+# Install dependencies
 pip install -r requirements.txt
 
-# 启动服务
+# Start service
 python web_app.py
 ```
 
-访问 `http://127.0.0.1:5000` 开启你的 AI 职场之旅。
+Visit `http://127.0.0.1:5000` to begin your AI career journey.
 
 <details>
-<summary><strong>启动后看到什么？（点击展开）</strong></summary>
+<summary><strong>What to expect after launch? (Click to expand)</strong></summary>
 
-1. **登录界面** — 创建账户或登录，数据隔离存储
-2. **岗位抓取** — 输入关键词/城市，一键抓取 Boss 直聘实时数据
-3. **市场分析** — 自动生成薪资分布、技能热图、经验要求等分析报告
-4. **职业规划** — 上传简历或输入背景，AI 给出人岗匹配建议与行动路线
-5. **模拟面试** — 选择岗位，进入 AI 面试官模式，实时反馈与评分
-6. **神态分析** — 面试时开启摄像头，实时追踪表情/眼神/姿态，输出综合评分
+1. **Login Interface** — Create account or login with isolated data storage
+2. **Job Scraping** — Enter keywords/city, one-click scrape Boss Zhipin real-time data
+3. **Market Analysis** — Auto-generate analysis reports: salary distribution, skill heatmap, experience requirements
+4. **Career Planning** — Upload resume or input background, AI provides job-candidate matching suggestions and action plans
+5. **Mock Interview** — Select position, enter AI interviewer mode with real-time feedback and scoring
+6. **Demeanor Analysis** — Enable camera during interview, real-time tracking of expression/eye contact/posture with comprehensive score
 
 </details>
 
 ---
 
-## 架构设计
+## Architecture
 
 ```
 CareerAI/
-├── web_app.py                    # Flask Web 服务入口
-├── requirements.txt              # 依赖清单
-├── data/                         # 数据中心
-│   ├── career_jobs_latest.json   # 岗位数据
-│   ├── career_jobs_vector_db/    # 向量数据库
-│   └── users.db                  # 用户账户系统
+├── web_app.py                    # Flask web service entry
+├── requirements.txt              # Dependencies
+├── data/                         # Data center
+│   ├── career_jobs_latest.json   # Job data
+│   ├── career_jobs_vector_db/    # Vector database
+│   └── users.db                  # User account system
 ├── src/
-│   ├── scraper.py                # Boss 直聘抓取引擎
-│   ├── analyzer.py               # 市场数据分析
-│   ├── report.py                 # 报告生成逻辑
-│   ├── interview_module.py        # AI 面试官
-│   ├── camera.py                 # 摄像头神态分析
-│   ├── models.py                 # 数据模型定义
-│   ├── config.py                 # 全局配置
-│   └── career_planning/          # 核心规划算法
-│       ├── dialogue/              # 对话管理
-│       ├── reports/               # 报告生成
-│       └── data/                  # 数据加载
-├── app/                          # 前端应用（可选）
-├── static/                       # 静态资源
-└── template/                     # HTML 模板
+│   ├── scraper.py                # Boss Zhipin scraping engine
+│   ├── analyzer.py               # Market data analysis
+│   ├── report.py                 # Report generation logic
+│   ├── interview_module.py        # AI interviewer
+│   ├── camera.py                 # Camera demeanor analysis
+│   ├── models.py                 # Data model definitions
+│   ├── config.py                 # Global configuration
+│   └── career_planning/          # Core planning algorithms
+│       ├── dialogue/              # Dialogue management
+│       ├── reports/               # Report generation
+│       └── data/                  # Data loading
+├── app/                          # Frontend app (optional)
+├── static/                       # Static resources
+└── template/                     # HTML templates
 ```
 
-### 🔌 核心模块说明
+### 🔌 Core Module Description
 
-| 模块 | 职责 | 关键方法 |
+| Module | Responsibility | Key Methods |
 | --- | --- | --- |
-| **scraper.py** | 从 Boss 直聘抓取岗位数据 | `fetch_jobs()`, `parse_job_details()` |
-| **analyzer.py** | 统计分析市场数据 | `analyze_salary()`, `extract_skills()`, `generate_report()` |
-| **interview_module.py** | AI 面试官逻辑 | `start_interview()`, `ask_question()`, `evaluate_answer()` |
-| **camera.py** | 摄像头实时分析 | `detect_expression()`, `track_eye_contact()`, `analyze_posture()` |
-| **career_planning/** | 职业规划 RAG 引擎 | `match_jobs()`, `generate_plan()`, `suggest_improvements()` |
+| **scraper.py** | Scrape job data from Boss Zhipin | `fetch_jobs()`, `parse_job_details()` |
+| **analyzer.py** | Statistical analysis of market data | `analyze_salary()`, `extract_skills()`, `generate_report()` |
+| **interview_module.py** | AI interviewer logic | `start_interview()`, `ask_question()`, `evaluate_answer()` |
+| **camera.py** | Real-time camera analysis | `detect_expression()`, `track_eye_contact()`, `analyze_posture()` |
+| **career_planning/** | Career planning RAG engine | `match_jobs()`, `generate_plan()`, `suggest_improvements()` |
 
 ---
 
-## API 入口
+## API Endpoints
 
-| 路径 | 方法 | 说明 |
+| Path | Method | Description |
 | --- | --- | --- |
-| `/api/status` | `GET` | 检查登录态、数据库连接状态 |
-| `/api/auth/register` | `POST` | 用户注册 |
-| `/api/auth/login` | `POST` | 用户登录 |
-| `/api/jobs/fetch` | `POST` | 触发岗位抓取任务 |
-| `/api/jobs/search` | `POST` | 语义搜索岗位 |
-| `/api/analysis/market` | `GET` | 获取市场分析报告 |
-| `/api/career/analyze` | `POST` | 生成职业规划报告 |
-| `/api/interview/start` | `POST` | 初始化面试场景 |
-| `/api/interview/answer` | `POST` | 提交面试答案 |
-| `/api/interview/camera/stats` | `GET` | 获取实时神态分析数据 |
+| `/api/status` | `GET` | Check login status and database connection |
+| `/api/auth/register` | `POST` | User registration |
+| `/api/auth/login` | `POST` | User login |
+| `/api/jobs/fetch` | `POST` | Trigger job scraping task |
+| `/api/jobs/search` | `POST` | Semantic job search |
+| `/api/analysis/market` | `GET` | Get market analysis report |
+| `/api/career/analyze` | `POST` | Generate career planning report |
+| `/api/interview/start` | `POST` | Initialize interview scenario |
+| `/api/interview/answer` | `POST` | Submit interview answer |
+| `/api/interview/camera/stats` | `GET` | Get real-time demeanor analysis data |
 
 ---
 
-## 安全性与隐私
+## Security & Privacy
 
-CareerAI 在设计上重视求职隐私：
+CareerAI prioritizes job search privacy by design:
 
-| 措施 | 说明 |
+| Measure | Description |
 | --- | --- |
-| 🔒 **本地存储** | 所有数据存储在本地 `data/` 目录，不上传云端 |
-| 👤 **多用户隔离** | 每个用户的数据严格物理隔离，互不可见 |
-| 🛡️ **账户系统** | 内置登录认证，支持密码加密存储 |
-| 📹 **摄像头隐私** | 摄像头数据仅用于本地分析，不保存不上传 |
-| 🔍 **开源透明** | 代码完全开源，随时可审查 |
+| 🔒 **Local Storage** | All data stored locally in `data/` directory, not uploaded to cloud |
+| 👤 **Multi-user Isolation** | Each user's data strictly physically isolated, mutually invisible |
+| 🛡️ **Account System** | Built-in login authentication with encrypted password storage |
+| 📹 **Camera Privacy** | Camera data only used for local analysis, not saved or uploaded |
+| 🔍 **Open Source** | Fully open-source code, auditable anytime |
 
-### 🍪 数据安全建议
+### 🍪 Data Security Recommendations
 
-- **定期备份** — 重要的分析报告和面试记录建议定期备份
-- **账户保护** — 不要在公共电脑上登录，避免数据泄露
-- **摄像头权限** — 面试模拟时会请求摄像头权限，可随时关闭
-
----
-
-## 常见问题 / FAQ
-
-<details>
-<summary><strong>怎么抓取 Boss 直聘的岗位数据？</strong></summary>
-
-CareerAI 内置了 Boss 直聘爬虫，支持关键词、城市、页数灵活配置。启动后在 Web 界面输入搜索条件，点击"抓取岗位"即可。数据会自动存储到本地向量数据库，支持语义搜索。
-
-</details>
-
-<details>
-<summary><strong>市场分析报告包含哪些内容？</strong></summary>
-
-包括：
-- 薪资分布（平均薪资、薪资范围、城市对比）
-- 技能热图（高频技能、技能组合、学习优先级）
-- 学历要求（本科/硕士/博士占比）
-- 经验要求（应届/1-3年/3-5年等分布）
-- 公司规模与融资阶段分析
-
-</details>
-
-<details>
-<summary><strong>职业规划是怎么工作的？</strong></summary>
-
-基于 RAG（检索增强生成）技术：
-1. 你上传简历或输入背景信息
-2. AI 从岗位数据库中检索相关岗位
-3. 结合你的背景，生成人岗匹配评分
-4. 提供具体的改进建议与行动路线
-
-</details>
-
-<details>
-<summary><strong>AI 面试官怎么工作？</strong></summary>
-
-结构化面试流程：
-1. 选择目标岗位
-2. AI 根据岗位要求生成 8-15 道面试题
-3. 支持深度追问，模拟真实面试
-4. 实时给出答案评分与改进建议
-5. 生成面试总结报告
-
-</details>
-
-<details>
-<summary><strong>摄像头神态分析准确吗？</strong></summary>
-
-基于 OpenCV 和深度学习模型，可以检测：
-- 表情识别（微笑、紧张、困惑等）
-- 眼神接触（是否看向镜头）
-- 头部姿态（点头、摇头、歪头等）
-- 综合评分（0-100 分）
-
-准确度取决于光线、摄像头质量等因素。建议在光线充足的环境下使用。
-
-</details>
-
-<details>
-<summary><strong>支持 Linux/Mac 吗？</strong></summary>
-
-支持，但需要手动配置：
-- **Linux** — 需要安装 Chrome/Chromium，修改 `config.py` 中的浏览器路径
-- **Mac** — 需要安装 Chrome，可能需要调整权限设置
-- **Windows** — 开箱即用，项目包含预置 Chrome 内核
-
-建议在 Windows 上使用以获得最佳体验。
-
-</details>
-
-<details>
-<summary><strong>数据会被上传到云端吗？</strong></summary>
-
-不会。所有数据存储在本地 `data/` 目录，不上传任何云服务。你完全掌控自己的求职数据。
-
-</details>
+- **Regular Backups** — Important analysis reports and interview records should be backed up regularly
+- **Account Protection** — Don't login on public computers to avoid data leaks
+- **Camera Permissions** — Camera permissions requested during mock interviews, can be disabled anytime
 
 ---
 
-## 贡献
+## FAQ
 
-这个项目是为了帮助求职者而创建的。如果你有想法或遇到问题，欢迎：
+<details>
+<summary><strong>How to scrape Boss Zhipin job data?</strong></summary>
 
-- 📝 **提 Issue** — 报告 Bug 或提出功能建议
-- 🔧 **提 PR** — 改进代码、优化算法、增加新功能
-- 💬 **讨论** — 分享你的求职经验和改进建议
+CareerAI has a built-in Boss Zhipin crawler supporting flexible keyword, city, and page configuration. After launch, enter search criteria in the web interface and click "Scrape Jobs". Data is automatically stored in the local vector database supporting semantic search.
+
+</details>
+
+<details>
+<summary><strong>What does the market analysis report include?</strong></summary>
+
+Includes:
+- Salary distribution (average salary, salary range, city comparison)
+- Skill heatmap (high-frequency skills, skill combinations, learning priorities)
+- Education requirements (bachelor's/master's/PhD ratio)
+- Experience requirements (fresh graduate/1-3 years/3-5 years distribution)
+- Company size and funding stage analysis
+
+</details>
+
+<details>
+<summary><strong>How does career planning work?</strong></summary>
+
+Based on RAG (Retrieval-Augmented Generation) technology:
+1. Upload resume or input background information
+2. AI retrieves relevant positions from job database
+3. Combined with your background, generates job-candidate matching score
+4. Provides specific improvement suggestions and action plans
+
+</details>
+
+<details>
+<summary><strong>How does the AI interviewer work?</strong></summary>
+
+Structured interview process:
+1. Select target position
+2. AI generates 8-15 interview questions based on position requirements
+3. Supports deep follow-up questions, simulating real interviews
+4. Real-time answer scoring and improvement suggestions
+5. Generates interview summary report
+
+</details>
+
+<details>
+<summary><strong>Is camera demeanor analysis accurate?</strong></summary>
+
+Based on OpenCV and deep learning models, can detect:
+- Expression recognition (smile, tension, confusion, etc.)
+- Eye contact (whether looking at camera)
+- Head posture (nodding, shaking head, tilting head, etc.)
+- Comprehensive score (0-100 points)
+
+Accuracy depends on lighting, camera quality, and other factors. Recommended for use in well-lit environments.
+
+</details>
+
+<details>
+<summary><strong>Does it support Linux/Mac?</strong></summary>
+
+Yes, but requires manual configuration:
+- **Linux** — Need to install Chrome/Chromium, modify browser path in `config.py`
+- **Mac** — Need to install Chrome, may need to adjust permission settings
+- **Windows** — Ready to use out of the box, project includes pre-configured Chrome kernel
+
+Recommended for use on Windows for best experience.
+
+</details>
+
+<details>
+<summary><strong>Will data be uploaded to the cloud?</strong></summary>
+
+No. All data is stored locally in the `data/` directory, not uploaded to any cloud service. You have complete control over your job search data.
+
+</details>
+
+---
+
+## Contributing
+
+This project was created to help job seekers. If you have ideas or encounter problems, welcome to:
+
+- 📝 **Submit Issues** — Report bugs or propose features
+- 🔧 **Submit PRs** — Improve code, optimize algorithms, add new features
+- 💬 **Discuss** — Share your job search experience and improvement suggestions
 
 [Issues](https://github.com/yourusername/CareerAI/issues) · [Pull Requests](https://github.com/yourusername/CareerAI/pulls)
 
 ---
 
-## ⭐ 为什么值得 Star
+## ⭐ Why Worth Starring
 
-- 📊 **真实数据** — 基于 Boss 直聘实时数据，不是凭感觉的建议
-- 🤖 **AI 全程陪伴** — 从分析到面试，AI 贯穿整个求职流程
-- 🎯 **精准匹配** — RAG 技术确保职位推荐的准确性
-- 🔄 **持续迭代** — 随着招聘市场变化，算法不断优化
-- 💰 **完全免费** — 开源项目，无任何隐藏费用
+- 📊 **Real Data** — Based on Boss Zhipin real-time data, not guesswork advice
+- 🤖 **AI Companion** — From analysis to interview, AI throughout the job search process
+- 🎯 **Precise Matching** — RAG technology ensures position recommendation accuracy
+- 🔄 **Continuous Iteration** — Algorithms continuously optimized as recruitment market changes
 
-Star 一下，下次求职时能找到。⭐
-
----
-
-## 致谢
-
-感谢以下开源项目的支持：
-
-- [Flask](https://flask.palletsprojects.com/) — Web 框架
-- [OpenCV](https://opencv.org/) — 计算机视觉
-- [LangChain](https://www.langchain.com/) — LLM 应用框架
-- [Chroma](https://www.trychroma.com/) — 向量数据库
-- [Anthropic Claude](https://www.anthropic.com/) — AI 模型
+Star it so you can find it next time you're job hunting. ⭐
 
 ---
 
-## 联系方式
+## Acknowledgments
+
+Thanks to the following open-source projects:
+
+- [Flask](https://flask.palletsprojects.com/) — Web framework
+- [OpenCV](https://opencv.org/) — Computer vision
+- [LangChain](https://www.langchain.com/) — LLM application framework
+- [Chroma](https://www.trychroma.com/) — Vector database
+- [Anthropic Claude](https://www.anthropic.com/) — AI model
+
+---
+
+## Contact
 
 - 📧 **Email** — yf2678045931@outlook.com
 
-
-> Bug 反馈和功能请求请用 [GitHub Issues](https://github.com/yourusername/CareerAI/issues)，更容易跟踪。
+> Bug reports and feature requests please use [GitHub Issues](https://github.com/yourusername/CareerAI/issues), easier to track.
 
 ---
 
@@ -314,8 +311,8 @@ Star 一下，下次求职时能找到。⭐
 
 ---
 
-## ⚠️ 声明
+## ⚠️ Disclaimer
 
-本项目仅供职业规划辅助与学术交流使用，不代表最终录用结果。请结合实际情况审慎参考。
+This project is for career planning assistance and academic exchange only, does not represent final hiring results. Please refer cautiously based on actual circumstances.
 
 <p align="center">Made with ❤️ by CareerAI Team</p>
