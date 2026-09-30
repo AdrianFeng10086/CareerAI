@@ -289,17 +289,20 @@ Star it so you can find it next time you're job hunting. ⭐
 
 Thanks to the following open-source projects:
 
+- [Flask](https://flask.palletsprojects.com/) — Web 框架
+- [OpenCV](https://opencv.org/) — 计算机视觉
+- [LangChain](https://www.langchain.com/) — LLM 应用框架
+- [Chroma](https://www.trychroma.com/) — 向量数据库
 - [Flask](https://flask.palletsprojects.com/) — Web framework
 - [OpenCV](https://opencv.org/) — Computer vision
 - [LangChain](https://www.langchain.com/) — LLM application framework
 - [Chroma](https://www.trychroma.com/) — Vector database
-- [Anthropic Claude](https://www.anthropic.com/) — AI model
 
 ---
 
 ## Contact
 
-- 📧 **Email** — yf2678045931@outlook.com
+- 📧 **Email** — 2678045931@qq.com
 
 > Bug reports and feature requests please use [GitHub Issues](https://github.com/yourusername/CareerAI/issues), easier to track.
 
